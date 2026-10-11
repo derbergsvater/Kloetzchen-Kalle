@@ -14,7 +14,7 @@
   header { display:flex; align-items:center; gap:8px; padding:8px 12px; background:var(--bar); }
   header h1 { font-size:20px; margin:0 auto 0 0; }
   #stars { font-size:22px; font-weight:bold; min-width:64px; }
-  .speed { font-size:24px; border:3px solid transparent; border-radius:12px; background:#fff; padding:2px 8px; }
+  header button { font-size:24px; border:3px solid transparent; border-radius:12px; background:#fff; padding:2px 8px; }
   .speed.on { border-color:#ff9f1c; background:#ffe8c2; }
   main { flex:1; display:flex; justify-content:center; align-items:center; min-height:0; padding:6px; }
   canvas { display:block; border-radius:14px; }
@@ -34,6 +34,7 @@
 <header>
   <h1>Klötzchen-Kalle</h1>
   <span id="stars">⭐ 0</span>
+  <button id="music" title="Musik an/aus">🎵</button>
   <button class="speed on" data-ms="2400" title="ganz langsam">🐌</button>
   <button class="speed" data-ms="1500" title="langsam">🐢</button>
   <button class="speed" data-ms="900" title="schneller">🐇</button>
@@ -55,17 +56,23 @@ const SHAPES = [
   { c:'#ffbe0b', m:[[0,0,1],[1,1,1],[0,0,0]] },
   { c:'#57cc99', m:[[0,1,1],[1,1,0],[0,0,0]] },
 ];
-// Kalle-Tempo: Zellen pro Sekunde bzw. Sekunden pro Drehung
-const WALK = 9, CLIMB = 10, TURN = 0.45, DROP_MS = 35;
+// Kalle-Tempo: Zellen pro Sekunde; Drehung = Schwung holen + Stemmen + Loslassen (Sekunden)
+const WALK = 9, CLIMB = 9, DROP_MS = 35;
+const T_WIND = 0.3, T_PUSH = 0.6, T_REL = 0.35, TURN = T_WIND + T_PUSH + T_REL;
+// Kalles Füße relativ zum Griffpunkt (in Zellen): neben dem Stein → oben drauf
+const OFF0 = [-0.42, 0.55], OFF1 = [-0.4, 0.1];
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let S, FX, FY, RAIL, HOME;          // Zellgröße, Feld-Ursprung, Schiene (Fußhöhe), Kalles Platz
-let board, piece, lastShape = -1, acc = 0, dropping = false, clearing = null, wipe = null, stars = 0;
+let board, piece, lastShape = -1, acc = 0, dropping = false, clearing = null, wipe = null, stars = 0, time = 0;
 let fallMs = 2400;
-const man = { x:0, y:0, state:'home', t:0, queue:0, ok:false, kick:0, cheer:0, walkT:0 };
+const man = { x:0, y:0, ax:0, dir:-1, state:'home', t:0, queue:0, ok:false, kick:0, cheer:0,
+              walkT:0, ph:0, moving:false, lean:0, fired:{}, say:'', sayT:0, blink:0 };
 
 const rotate = m => m.map((r, y) => r.map((_, x) => m[m.length - 1 - x][y]));
 const cells = m => m.flatMap((r, y) => r.flatMap((v, x) => v ? [[x, y]] : []));
+const lerp = (a, b, k) => a + (b - a) * k;
+const ease = k => k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
 function fits(m, px, py) {
   return cells(m).every(([x, y]) => {
     const bx = px + x, by = py + y;
@@ -83,6 +90,7 @@ function spawn() {
   piece = { m, c: SHAPES[i].c, x: Math.floor((COLS - m.length) / 2), y: -top };
   acc = 0;
   if (!fits(piece.m, piece.x, piece.y)) { piece = null; wipe = { t: 0 }; say('Alles voll!<br>Weiter geht\'s ⭐'); sound('full'); }
+  else sound('pop');
 }
 
 function lock() {
@@ -95,11 +103,23 @@ function lock() {
 }
 
 // ---------- Kalle ----------
-function pieceCenterX() {
-  const c = cells(piece.m);
-  return FX + (piece.x + c.reduce((s, [x]) => s + x, 0) / c.length + 0.5) * S;
+// Kalle packt den Stein an der linken Kante und stemmt ihn im Uhrzeigersinn herum.
+// Der Griffpunkt dreht sich mit dem Stein, Kalles Hände bleiben daran kleben.
+function pivot() { const n = piece.m.length; return [FX + (piece.x + n / 2) * S, FY + (piece.y + n / 2) * S]; }
+function gripAt(a) {
+  const c = cells(piece.m), n = piece.m.length, minX = Math.min(...c.map(p => p[0]));
+  const ys = c.filter(p => p[0] === minX).map(p => p[1]).sort((p, q) => p - q);
+  const rx = (minX - n / 2) * S, ry = (ys[(ys.length - 1) >> 1] + 0.5 - n / 2) * S;
+  const [px, py] = pivot();
+  return [px + rx * Math.cos(a) - ry * Math.sin(a), py + rx * Math.sin(a) + ry * Math.cos(a)];
 }
-const pieceTopY = () => FY + (piece.y + Math.min(...cells(piece.m).map(c => c[1]))) * S;
+function startPose() { const [gx, gy] = gripAt(0); return [gx + OFF0[0] * S, gy + OFF0[1] * S]; }
+function turnAngle() {
+  if (man.state !== 'turn') return 0;
+  const k = Math.min(Math.max((man.t - T_WIND) / T_PUSH, 0), 1);
+  return man.ok ? ease(k) * Math.PI / 2 : Math.sin(k * Math.PI) * 0.18;   // geht nicht: kippt an und fällt zurück
+}
+const talk = (s, d = 0.8) => { man.say = s; man.sayT = d; };
 
 function wantTurn() {
   if (!piece || dropping || clearing || wipe) return;
@@ -108,54 +128,74 @@ function wantTurn() {
 }
 
 function startTurn() {
-  man.state = 'turn'; man.t = 0;
+  man.state = 'turn'; man.t = 0; man.fired = {};
   const r = rotate(piece.m);
   // ponytail: einfache Wandabstoß-Versuche statt SRS-Tabellen
   const kick = [0, -1, 1, -2, 2].find(k => fits(r, piece.x + k, piece.y));
   man.ok = kick !== undefined; man.kick = kick || 0;
-  sound(man.ok ? 'turn' : 'bonk');
+  sound('hau'); talk('Hau…');
 }
 
 function stepToward(target, speed, dt) {
   const d = target - man.x, s = speed * S * dt;
-  man.walkT += dt;
   if (Math.abs(d) <= s) { man.x = target; man.moving = false; return true; }
-  man.x += Math.sign(d) * s; man.moving = true; return false;
+  man.x += Math.sign(d) * s; man.dir = Math.sign(d); man.moving = true;
+  man.walkT += dt;
+  const ph = Math.floor(man.walkT * 14 / Math.PI);
+  if (ph !== man.ph) { man.ph = ph; sound('step'); }
+  return false;
+}
+function moveTo(tx, ty, speed, dt) {
+  const dx = tx - man.x, dy = ty - man.y, d = Math.hypot(dx, dy), s = speed * S * dt;
+  if (d <= s) { man.x = tx; man.y = ty; return true; }
+  man.x += dx / d * s; man.y += dy / d * s; return false;
 }
 
 function updateMan(dt) {
   man.cheer = Math.max(0, man.cheer - dt);
+  man.sayT = Math.max(0, man.sayT - dt);
+  man.blink = man.blink > 0 ? man.blink - dt : (Math.random() < dt * 0.4 ? 0.13 : 0);
   if (!['walk', 'gohome', 'follow'].includes(man.state)) man.moving = false;
+  if (man.state !== 'turn') man.lean *= 0.85;
   switch (man.state) {
-    case 'home': man.x = HOME; man.y = RAIL; break;
+    case 'home': man.x = HOME; man.y = RAIL; man.dir = -1; break;
     case 'gohome': if (stepToward(HOME, WALK, dt)) man.state = 'home'; break;
-    case 'follow': if (!piece) man.state = 'gohome'; else stepToward(pieceCenterX(), WALK, dt); break;
+    case 'follow': if (!piece) man.state = 'gohome'; else stepToward(startPose()[0], WALK, dt); break;
     case 'walk':
       if (!piece) { man.state = 'gohome'; break; }
-      if (stepToward(pieceCenterX(), WALK, dt)) man.state = 'down';
+      if (stepToward(startPose()[0], WALK, dt)) { man.ax = man.x; man.state = 'down'; sound('zipDown'); }
       break;
-    case 'down':
-      man.y += CLIMB * S * dt;
-      if (man.y >= pieceTopY()) { man.y = pieceTopY(); startTurn(); }
-      break;
-    case 'turn':
+    case 'down': { const [sx, sy] = startPose(); if (moveTo(sx, sy, CLIMB, dt)) startTurn(); break; }
+    case 'turn': {
       man.t += dt;
-      if (man.t >= TURN) {
+      const t = man.t;
+      if (t >= T_WIND && !man.fired.push) { man.fired.push = 1; sound(man.ok ? 'ruck' : 'strain'); talk(man.ok ? '…ruck!' : 'Uff!'); }
+      if (!man.ok && t >= T_WIND + T_PUSH * 0.5 && !man.fired.bonk) { man.fired.bonk = 1; sound('bonk'); }
+      if (man.ok && t >= T_WIND + T_PUSH && !man.fired.done) { man.fired.done = 1; sound('pling'); }
+      const k = Math.min(Math.max((t - T_WIND) / T_PUSH, 0), 1);
+      const e = man.ok ? ease(k) : Math.sin(k * Math.PI) * 0.3;
+      const [gx, gy] = gripAt(turnAngle());
+      man.x = gx + lerp(OFF0[0], OFF1[0], e) * S;
+      man.y = gy + lerp(OFF0[1], OFF1[1], e) * S;
+      man.lean = t < T_WIND ? -Math.sin(t / T_WIND * Math.PI / 2) * 0.3   // Schwung holen
+               : t < T_WIND + T_PUSH ? 0.25 : man.lean * 0.85;            // reinstemmen
+      if (t >= TURN) {
         if (man.ok) { piece.m = rotate(piece.m); piece.x += man.kick; }
         man.queue--;
-        man.y = pieceTopY();
-        if (man.queue > 0 && man.ok) startTurn(); else { man.queue = 0; man.state = 'up'; }
+        if (man.queue > 0 && man.ok) man.state = 'down';
+        else { man.queue = 0; man.state = 'up'; sound('zipUp'); }
       }
       break;
+    }
     case 'up':
-      man.y -= CLIMB * S * dt;
-      if (man.y <= RAIL) { man.y = RAIL; man.state = man.queue > 0 ? 'walk' : 'follow'; }
+      if (moveTo(man.ax, RAIL, CLIMB, dt)) man.state = man.queue > 0 ? 'walk' : 'follow';
       break;
   }
 }
 
 // ---------- Spielablauf ----------
 function update(dt) {
+  time += dt;
   if (wipe) {
     wipe.t += dt;
     if (wipe.t > 1.2) { wipe = null; board = emptyBoard(); spawn(); }
@@ -166,7 +206,7 @@ function update(dt) {
       stars += clearing.rows.length;
       document.getElementById('stars').textContent = '⭐ ' + stars;
       say(['Super!', 'Toll!', 'Klasse!', 'Juhu!'][Math.floor(Math.random() * 4)]);
-      man.cheer = 1.2; clearing = null; spawn();
+      man.cheer = 1.2; talk('Juhu!', 1.2); sound('juhu'); clearing = null; spawn();
     }
   } else if (piece && !busy()) {
     acc += dt * 1000;
@@ -177,6 +217,7 @@ function update(dt) {
     }
   }
   updateMan(dt);
+  music();
 }
 
 function move(dx) {
@@ -185,7 +226,7 @@ function move(dx) {
 }
 function drop() {
   if (!piece || busy() || clearing || wipe) return;
-  dropping = true; acc = 0;
+  dropping = true; acc = 0; sound('whoosh');
 }
 
 // ---------- Zeichnen ----------
@@ -199,78 +240,156 @@ function cell(x, y, color, alpha = 1) {
   ctx.globalAlpha = 1;
 }
 
+function star(x, y, r, alpha) {
+  ctx.globalAlpha = alpha; ctx.fillStyle = '#ffd60a';
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = i * Math.PI / 5 - Math.PI / 2, rr = i % 2 ? r * 0.45 : r;
+    ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  ctx.fill(); ctx.globalAlpha = 1;
+}
+
 function drawPiece() {
   const n = piece.m.length;
-  let py = piece.y, angle = 0;
+  let py = piece.y;
   if (!busy() && fits(piece.m, piece.x, piece.y + 1)) py += acc / (dropping ? DROP_MS : fallMs);
-  if (man.state === 'turn') {
-    const k = Math.min(man.t / TURN, 1);
-    angle = man.ok ? (1 - Math.pow(1 - k, 3)) * Math.PI / 2
-                   : Math.sin(k * Math.PI * 4) * 0.2 * (1 - k);
-  }
   // Schatten: wo der Stein landet
   if (!dropping) {
     let gy = piece.y; while (fits(piece.m, piece.x, gy + 1)) gy++;
     for (const [x, y] of cells(piece.m)) if (gy + y >= 0) cell(FX + (piece.x + x) * S, FY + (gy + y) * S, piece.c, 0.2);
   }
   const cx = FX + (piece.x + n / 2) * S, cy = FY + (py + n / 2) * S;
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(angle);
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(turnAngle());
   for (const [x, y] of cells(piece.m)) cell(x * S - n / 2 * S, y * S - n / 2 * S, piece.c);
   ctx.restore();
+  // Funkeln nach geschaffter Drehung
+  if (man.state === 'turn' && man.ok && man.t > T_WIND + T_PUSH) {
+    const k = (man.t - T_WIND - T_PUSH) / T_REL;
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3 + k;
+      star(cx + Math.cos(a) * S * (1 + k * 0.8), cy + Math.sin(a) * S * (1 + k * 0.8), S * 0.18, 1 - k);
+    }
+  }
 }
 
 function drawMan() {
-  const swing = man.moving ? Math.sin(man.walkT * 14) * 0.5 : 0;
-  const hop = man.cheer > 0 ? Math.abs(Math.sin(man.cheer * 8)) * S * 0.5 : 0;
-  const x = man.x, f = man.y - hop, u = S;
-  const armsUp = man.state === 'turn' || man.cheer > 0;
+  const u = S, st = man.state, t = man.t;
+  const pushing = st === 'turn' && t >= T_WIND && t < T_WIND + T_PUSH;
+  const gripping = st === 'turn' && t < T_WIND + T_PUSH;
+  const released = st === 'turn' && t >= T_WIND + T_PUSH;
+  const hop = man.cheer > 0 ? Math.abs(Math.sin(man.cheer * 8)) * u * 0.5
+            : released && man.ok ? Math.sin((t - T_WIND - T_PUSH) / T_REL * Math.PI) * u * 0.25 : 0;
+  const x = man.x, f = man.y - hop;
   // Seil von der Schiene
-  if (['down', 'turn', 'up'].includes(man.state)) {
-    ctx.strokeStyle = '#8d6e63'; ctx.lineWidth = u * 0.06;
-    ctx.beginPath(); ctx.moveTo(x, RAIL - u * 0.1); ctx.lineTo(x, f - u * 0.9); ctx.stroke();
+  if (['down', 'turn', 'up'].includes(st)) {
+    ctx.strokeStyle = '#8d6e63'; ctx.lineWidth = u * 0.06; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(man.ax, RAIL - u * 0.05); ctx.lineTo(x, f - u * 0.75); ctx.stroke();
+    ctx.fillStyle = '#5d4037'; ctx.beginPath(); ctx.arc(man.ax, RAIL, u * 0.08, 0, 7); ctx.fill();
   }
-  ctx.lineCap = 'round'; ctx.lineWidth = u * 0.14;
-  // Beine
-  ctx.strokeStyle = '#1d3557';
-  for (const s of [1, -1]) {
-    ctx.beginPath(); ctx.moveTo(x, f - u * 0.38);
-    ctx.lineTo(x + Math.sin(swing * s) * u * 0.3 + s * u * 0.08, f); ctx.stroke();
+  ctx.save(); ctx.translate(x, f); ctx.rotate(man.lean);
+  // Hände in Kalles eigenen Koordinaten
+  let hands = null;
+  if (gripping && piece) {
+    const [gx, gy] = gripAt(turnAngle()), dx = gx - x, dy = gy - f, a = -man.lean;
+    hands = [dx * Math.cos(a) - dy * Math.sin(a), dx * Math.sin(a) + dy * Math.cos(a)];
   }
-  // Körper (Latzhose)
-  ctx.fillStyle = '#e63946';
-  ctx.beginPath(); ctx.roundRect(x - u * 0.2, f - u * 0.78, u * 0.4, u * 0.44, u * 0.1); ctx.fill();
-  // Arme
-  ctx.strokeStyle = '#f4c095';
+  const breathe = st === 'home' ? Math.sin(time * 2.5) * u * 0.015 : 0;
+  const swing = man.moving ? Math.sin(man.walkT * 14) * 0.6
+              : pushing ? Math.sin(time * 28) * 0.7                       // strampeln
+              : st === 'down' || st === 'up' ? Math.sin(time * 6) * 0.25 : 0;
+  ctx.lineCap = 'round';
+  // Beine + Schuhe
   for (const s of [1, -1]) {
-    const wob = armsUp ? Math.sin(man.t * 20) * u * 0.06 : 0;
-    ctx.beginPath(); ctx.moveTo(x + s * u * 0.18, f - u * 0.7);
-    if (armsUp) ctx.lineTo(x + s * u * 0.3, f - u * 1.12 + wob);
-    else ctx.lineTo(x + s * u * 0.3 - swing * s * u * 0.1, f - u * 0.4);
-    ctx.stroke();
+    const fx = Math.sin(swing * s) * u * 0.3 + s * u * 0.08, fy = -Math.max(0, Math.cos(swing * s * 2)) * (pushing ? u * 0.1 : 0);
+    ctx.strokeStyle = '#1d3557'; ctx.lineWidth = u * 0.13;
+    ctx.beginPath(); ctx.moveTo(s * u * 0.06, -u * 0.38); ctx.lineTo(fx, fy - u * 0.04); ctx.stroke();
+    ctx.fillStyle = '#5d4037'; ctx.beginPath(); ctx.ellipse(fx + man.dir * u * 0.04, fy - u * 0.02, u * 0.1, u * 0.055, 0, 0, 7); ctx.fill();
+  }
+  // Körper: Hemd + Latzhose mit Trägern
+  const by = -u * 0.8 + breathe;
+  ctx.fillStyle = '#fefae0'; ctx.beginPath(); ctx.roundRect(-u * 0.19, by, u * 0.38, u * 0.3, u * 0.1); ctx.fill();
+  ctx.fillStyle = '#e63946'; ctx.beginPath(); ctx.roundRect(-u * 0.2, by + u * 0.14, u * 0.4, u * 0.32, u * 0.08); ctx.fill();
+  ctx.strokeStyle = '#e63946'; ctx.lineWidth = u * 0.05;
+  ctx.beginPath(); ctx.moveTo(-u * 0.12, by + u * 0.16); ctx.lineTo(-u * 0.1, by + u * 0.02);
+  ctx.moveTo(u * 0.12, by + u * 0.16); ctx.lineTo(u * 0.1, by + u * 0.02); ctx.stroke();
+  ctx.fillStyle = '#ffbe0b'; ctx.beginPath(); ctx.arc(-u * 0.12, by + u * 0.18, u * 0.03, 0, 7); ctx.arc(u * 0.12, by + u * 0.18, u * 0.03, 0, 7); ctx.fill();
+  // Arme + Hände
+  const armsUp = man.cheer > 0 || (released && man.ok);
+  for (const s of [1, -1]) {
+    const sx = s * u * 0.17, sy = by + u * 0.08;
+    let hx, hy;
+    if (hands) { hx = hands[0] - s * u * 0.02; hy = hands[1] + s * u * 0.05; }
+    else if (armsUp) { hx = s * u * 0.32; hy = -u * 1.15 + Math.sin(time * 18) * u * 0.05; }
+    else { hx = s * u * 0.28 - (man.moving ? Math.sin(man.walkT * 14) * s * u * 0.15 : 0); hy = -u * 0.42 + breathe; }
+    ctx.strokeStyle = '#fefae0'; ctx.lineWidth = u * 0.11;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(hx, hy); ctx.stroke();
+    ctx.fillStyle = '#f4c095'; ctx.beginPath(); ctx.arc(hx, hy, u * 0.065, 0, 7); ctx.fill();
   }
   // Kopf
-  ctx.fillStyle = '#f4c095';
-  ctx.beginPath(); ctx.arc(x, f - u * 0.98, u * 0.22, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#3b2f2f';
-  ctx.beginPath(); ctx.arc(x - u * 0.08, f - u * 1.0, u * 0.03, 0, 7); ctx.arc(x + u * 0.08, f - u * 1.0, u * 0.03, 0, 7); ctx.fill();
-  ctx.strokeStyle = '#3b2f2f'; ctx.lineWidth = u * 0.03;
-  ctx.beginPath(); ctx.arc(x, f - u * 0.95, u * 0.09, 0.2, Math.PI - 0.2); ctx.stroke();
-  // Mütze
+  const shake = released && !man.ok ? Math.sin(t * 40) * u * 0.05 : 0;
+  const hx = shake, hy = -u * 0.98 + breathe;
+  ctx.fillStyle = '#f4c095'; ctx.beginPath(); ctx.arc(hx, hy, u * 0.22, 0, 7); ctx.fill();
+  ctx.fillStyle = 'rgba(255,120,120,.45)';
+  ctx.beginPath(); ctx.arc(hx - u * 0.13, hy + u * 0.06, u * 0.045, 0, 7); ctx.arc(hx + u * 0.13, hy + u * 0.06, u * 0.045, 0, 7); ctx.fill();
+  ctx.fillStyle = ctx.strokeStyle = '#3b2f2f'; ctx.lineWidth = u * 0.03;
+  const effort = gripping;
+  if (effort) {                       // zusammengekniffene Augen > <
+    for (const s of [1, -1]) {
+      ctx.beginPath(); ctx.moveTo(hx + s * u * 0.12, hy - u * 0.05); ctx.lineTo(hx + s * u * 0.06, hy - u * 0.02);
+      ctx.lineTo(hx + s * u * 0.12, hy + u * 0.01); ctx.stroke();
+    }
+  } else if (man.blink > 0) {
+    ctx.beginPath(); ctx.moveTo(hx - u * 0.11, hy - u * 0.02); ctx.lineTo(hx - u * 0.05, hy - u * 0.02);
+    ctx.moveTo(hx + u * 0.05, hy - u * 0.02); ctx.lineTo(hx + u * 0.11, hy - u * 0.02); ctx.stroke();
+  } else {                            // Augen schauen zum Stein bzw. in Laufrichtung
+    const look = piece && st === 'home' ? Math.sign(pieceCenterX() - x) : man.dir;
+    for (const s of [1, -1]) {
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(hx + s * u * 0.08, hy - u * 0.02, u * 0.05, 0, 7); ctx.fill();
+      ctx.fillStyle = '#3b2f2f'; ctx.beginPath(); ctx.arc(hx + s * u * 0.08 + look * u * 0.018, hy - u * 0.015, u * 0.028, 0, 7); ctx.fill();
+    }
+  }
+  ctx.beginPath();
+  if (effort) ctx.ellipse(hx, hy + u * 0.09, u * 0.04, pushing ? u * 0.05 : u * 0.025, 0, 0, 7), ctx.fill();
+  else if (released && !man.ok) { ctx.moveTo(hx - u * 0.07, hy + u * 0.1); ctx.quadraticCurveTo(hx, hy + u * 0.06, hx + u * 0.07, hy + u * 0.1); ctx.stroke(); }
+  else { ctx.arc(hx, hy + u * 0.03, u * 0.09, 0.25, Math.PI - 0.25); ctx.stroke(); }
+  // Schweißtropfen beim Stemmen
+  if (pushing) {
+    ctx.fillStyle = '#90e0ef';
+    const dy = ((time * 2) % 1) * u * 0.25;
+    ctx.beginPath(); ctx.arc(hx - man.dir * u * 0.26, hy - u * 0.08 + dy, u * 0.035, 0, 7); ctx.fill();
+  }
+  // Mütze mit Schirm in Blickrichtung
   ctx.fillStyle = '#ffbe0b';
-  ctx.beginPath(); ctx.arc(x, f - u * 1.08, u * 0.22, Math.PI, 0); ctx.fill();
-  ctx.fillRect(x, f - u * 1.1, u * 0.3, u * 0.05);
+  ctx.beginPath(); ctx.arc(hx, hy - u * 0.08, u * 0.22, Math.PI, 0); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(hx + man.dir * u * 0.2, hy - u * 0.09, u * 0.14, u * 0.035, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#e63946'; ctx.beginPath(); ctx.arc(hx, hy - u * 0.3, u * 0.045, 0, 7); ctx.fill();
+  ctx.restore();
+  // Sprechblase
+  if (man.sayT > 0) {
+    ctx.font = `bold ${Math.round(u * 0.34)}px "Trebuchet MS", sans-serif`;
+    const w = ctx.measureText(man.say).width + u * 0.3, bx = Math.min(x + u * 0.2, cv.width / devicePixelRatio - w - 4), bby = f - u * 1.75;
+    ctx.globalAlpha = Math.min(1, man.sayT * 4);
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#3b2f2f'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(bx, bby, w, u * 0.5, u * 0.2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#3b2f2f'; ctx.fillText(man.say, bx + u * 0.15, bby + u * 0.37);
+    ctx.globalAlpha = 1;
+  }
+}
+function pieceCenterX() {
+  const c = cells(piece.m);
+  return FX + (piece.x + c.reduce((s, [x]) => s + x, 0) / c.length + 0.5) * S;
 }
 
 function draw() {
-  ctx.clearRect(0, 0, cv.width, cv.height);
-  // Himmel + Feld
-  ctx.fillStyle = '#e8f6ff'; ctx.beginPath(); ctx.roundRect(0, 0, cv.width / devicePixelRatio, cv.height / devicePixelRatio, 14); ctx.fill();
+  const W = cv.width / devicePixelRatio, H = cv.height / devicePixelRatio;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#e8f6ff'; ctx.beginPath(); ctx.roundRect(0, 0, W, H, 14); ctx.fill();
   ctx.fillStyle = '#fffdf6'; ctx.fillRect(FX, FY, COLS * S, ROWS * S);
   ctx.strokeStyle = '#efe6d2'; ctx.lineWidth = 1;
   for (let x = 1; x < COLS; x++) { ctx.beginPath(); ctx.moveTo(FX + x * S, FY); ctx.lineTo(FX + x * S, FY + ROWS * S); ctx.stroke(); }
   // Schiene für Kalle
-  ctx.fillStyle = '#a1887f'; ctx.fillRect(0, RAIL, COLS * S + FX * 2 + S * 1.4, S * 0.18);
-  // Steine im Feld
+  ctx.fillStyle = '#a1887f'; ctx.fillRect(0, RAIL, W, S * 0.18);
   const sink = wipe ? wipe.t * wipe.t * ROWS * S : 0;
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
     const c = board[y][x]; if (!c) continue;
@@ -285,9 +404,9 @@ function draw() {
 function resize() {
   const main = document.querySelector('main');
   const w = main.clientWidth - 12, h = main.clientHeight - 12;
-  S = Math.floor(Math.min(w / (COLS + 1.8), h / (ROWS + 2.6)));
-  FX = S * 0.2; FY = S * 2.4; RAIL = S * 1.9; HOME = FX + COLS * S + S * 0.8;
-  const W = FX * 2 + COLS * S + S * 1.4, H = FY + ROWS * S + S * 0.2;
+  S = Math.floor(Math.min(w / (COLS + 2.5), h / (ROWS + 2.6)));
+  FX = S * 0.9; FY = S * 2.4; RAIL = S * 1.9; HOME = FX + COLS * S + S * 0.8;
+  const W = FX + COLS * S + S * 1.6, H = FY + ROWS * S + S * 0.2;
   cv.width = W * devicePixelRatio; cv.height = H * devicePixelRatio;
   cv.style.width = W + 'px'; cv.style.height = H + 'px';
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
@@ -295,17 +414,63 @@ function resize() {
 }
 
 // ---------- Ton ----------
-let ac;
-function sound(kind) {
-  if (!ac) return;
-  const notes = { move:[[520, .05]], turn:[[440, .08], [660, .1]], bonk:[[160, .2]], land:[[220, .12]],
-                  line:[[523, .1], [659, .1], [784, .2]], full:[[392, .15], [330, .15], [262, .3]] }[kind];
-  let t = ac.currentTime;
-  for (const [f, d] of notes) {
-    const o = ac.createOscillator(), g = ac.createGain();
-    o.type = kind === 'bonk' ? 'square' : 'triangle'; o.frequency.value = f;
-    g.gain.setValueAtTime(0.15, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
-    o.connect(g).connect(ac.destination); o.start(t); o.stop(t + d); t += d * 0.9;
+// iPad: Web Audio startet nur nach Berührung (resume) und schweigt bei Stummschaltung,
+// außer die Audio-Session steht auf "playback" (Safari 16.4+).
+let ac, noiseBuf, musicOn = true, nextNote = 0, noteIdx = 0;
+function unlock() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  if (!ac) {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    noiseBuf = ac.createBuffer(1, ac.sampleRate * 0.5, ac.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  if (ac.state !== 'running') ac.resume();
+}
+for (const ev of ['pointerdown', 'touchend', 'click', 'keydown']) addEventListener(ev, unlock, { capture: true });
+
+function tone(f, d, { type = 'triangle', vol = 0.15, at = 0, to = 0 } = {}) {
+  const t = ac.currentTime + at, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, t);
+  if (to) o.frequency.exponentialRampToValueAtTime(to, t + d);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + d + 0.02);
+}
+function noise(d, { vol = 0.3, freq = 800, at = 0 } = {}) {
+  const t = ac.currentTime + at, s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+  s.buffer = noiseBuf; f.type = 'lowpass'; f.frequency.value = freq;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
+  s.connect(f).connect(g).connect(ac.destination); s.start(t); s.stop(t + d);
+}
+const SFX = {
+  pop:     () => tone(400, .1, { vol: .1, to: 750 }),
+  move:    () => tone(620, .06, { vol: .08 }),
+  step:    () => tone(170 + Math.random() * 50, .05, { type: 'sine', vol: .12 }),
+  zipDown: () => tone(1000, .35, { type: 'sine', vol: .07, to: 300 }),
+  zipUp:   () => tone(300, .35, { type: 'sine', vol: .07, to: 1000 }),
+  hau:     () => tone(260, .18, { type: 'square', vol: .06, to: 200 }),
+  ruck:    () => { tone(330, .14, { type: 'square', vol: .06, to: 250 }); tone(90, .55, { type: 'sawtooth', vol: .07, to: 160, at: .05 }); noise(.5, { vol: .08, freq: 600, at: .05 }); },
+  strain:  () => tone(200, .45, { type: 'sawtooth', vol: .06, to: 160 }),
+  pling:   () => { tone(880, .14, { vol: .12 }); tone(1320, .25, { vol: .1, at: .09 }); },
+  bonk:    () => tone(160, .25, { type: 'square', vol: .1, to: 80 }),
+  whoosh:  () => noise(.3, { vol: .2, freq: 2500 }),
+  land:    () => { noise(.18, { vol: .5, freq: 350 }); tone(120, .18, { type: 'sine', vol: .25, to: 55 }); },
+  line:    () => [523, 659, 784, 1047].forEach((f, i) => tone(f, .18, { vol: .12, at: i * .09 })),
+  juhu:    () => tone(500, .35, { vol: .1, to: 1100, at: .4 }),
+  full:    () => [392, 330, 262].forEach((f, i) => tone(f, .3, { vol: .12, at: i * .2 })),
+};
+function sound(k) { if (ac && ac.state === 'running') SFX[k](); }
+
+// Leise Hintergrundmelodie (Pentatonik, 0 = Pause)
+const MELODY = [523, 659, 784, 659, 587, 523, 440, 0, 392, 440, 523, 587, 659, 587, 523, 0,
+                659, 784, 880, 784, 659, 587, 523, 0, 440, 523, 587, 523, 440, 392, 523, 0];
+function music() {
+  if (!ac || !musicOn || ac.state !== 'running') return;
+  if (nextNote < ac.currentTime) nextNote = ac.currentTime + 0.05;
+  while (nextNote < ac.currentTime + 0.25) {
+    const i = noteIdx++ % MELODY.length, f = MELODY[i], at = nextNote - ac.currentTime;
+    if (f) tone(f, .3, { type: 'sine', vol: .035, at });
+    if (i % 4 === 0) tone([131, 175, 196, 131][(i >> 3) % 4], .5, { type: 'sine', vol: .04, at });
+    nextNote += 0.3;
   }
 }
 
@@ -318,15 +483,16 @@ function say(html) {
 // ---------- Eingabe ----------
 const press = (id, fn) => document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); fn(); });
 press('left', () => move(-1)); press('right', () => move(1)); press('turn', wantTurn); press('drop', drop);
-document.addEventListener('pointerdown', () => { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); }, { capture: true });
 document.addEventListener('keydown', e => {
-  ac = ac || new (window.AudioContext || window.webkitAudioContext)();
   const k = { ArrowLeft: () => move(-1), ArrowRight: () => move(1), ArrowUp: wantTurn, ' ': drop, ArrowDown: drop }[e.key];
   if (k) { e.preventDefault(); k(); }
 });
 for (const b of document.querySelectorAll('.speed')) b.addEventListener('click', () => {
   document.querySelectorAll('.speed').forEach(x => x.classList.toggle('on', x === b));
   fallMs = +b.dataset.ms;
+});
+document.getElementById('music').addEventListener('click', e => {
+  musicOn = !musicOn; e.currentTarget.textContent = musicOn ? '🎵' : '🔇';
 });
 
 addEventListener('resize', resize);
