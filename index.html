@@ -97,7 +97,7 @@ const OFF0 = [-0.42, 0.55], OFF1 = [-0.4, 0.1];
 const GIFTS = [
   { id: 'krone',      at: 3,  icon: '👑', short: 'Krone',       name: 'eine Krone',          kind: 'hat' },
   { id: 'hund',       at: 7,  icon: '🐶', short: 'Bello',       name: 'Hund Bello',          kind: 'pet' },
-  { id: 'zauber',     at: 12, icon: '🧙', short: 'Zauberhut',   name: 'einen Zauberhut',     kind: 'hat' },
+  { id: 'feuerwehr',  at: 12, icon: '🚒', short: 'Feuerwehr',   name: 'einen Feuerwehrhelm', kind: 'hat' },
   { id: 'vogel',      at: 18, icon: '🐦', short: 'Piep',        name: 'Vogel Piep',          kind: 'pet' },
   { id: 'pirat',      at: 25, icon: '🏴‍☠️', short: 'Piratenhut', name: 'einen Piratenhut',    kind: 'hat' },
   { id: 'regenbogen', at: 33, icon: '🌈', short: 'Regenbogen',  name: 'Regenbogen-Steine',   kind: 'fx' },
@@ -107,13 +107,14 @@ const GIFTS = [
 // Sammlung bleibt auf dem Gerät (fällt still auf leer zurück, wenn der Speicher gesperrt ist)
 const save = { stars: 0, hat: '', off: {} };
 try { Object.assign(save, JSON.parse(localStorage.getItem('kalle') || '{}')); } catch (e) {}
+if (save.hat === 'zauber') save.hat = 'feuerwehr';   // alter Hut aus früherer Version
 const store = () => { try { localStorage.setItem('kalle', JSON.stringify(save)); } catch (e) {} };
 const have = id => save.stars >= GIFTS.find(g => g.id === id).at;
 const on = id => have(id) && !save.off[id];
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let S, FX, FY, RAIL, HOME;          // Zellgröße, Feld-Ursprung, Schiene (Fußhöhe), Kalles Platz
-let board, piece, lastShape = -1, acc = 0, dropping = false, clearing = null, wipe = null, time = 0;
+let board, piece, nextShape = Math.floor(Math.random() * SHAPES.length), acc = 0, dropping = false, clearing = null, wipe = null, time = 0;
 let gift = null, giftQueue = [], parts = [];
 const dog = { x: 0, dir: -1, moving: false };
 let fallMs = 2400, paused = false;
@@ -134,8 +135,8 @@ const emptyBoard = () => Array.from({ length: ROWS }, () => Array(COLS).fill(nul
 const busy = () => ['walk', 'down', 'turn', 'up'].includes(man.state);
 
 function spawn() {
-  let i; do i = Math.floor(Math.random() * SHAPES.length); while (i === lastShape);
-  lastShape = i;
+  const i = nextShape;
+  do nextShape = Math.floor(Math.random() * SHAPES.length); while (nextShape === i);
   const m = SHAPES[i].m.map(r => r.slice());
   const top = Math.min(...cells(m).map(c => c[1]));
   piece = { m, c: SHAPES[i].c, x: Math.floor((COLS - m.length) / 2), y: -top, rainbow: on('regenbogen') };
@@ -512,11 +513,11 @@ function drawHat(id, hx, hy, u) {
     ctx.fill();
     ctx.fillStyle = '#e63946'; ctx.beginPath(); ctx.arc(hx, hy - u * .21, u * .035, 0, 7); ctx.fill();
     ctx.fillStyle = '#4ea8de'; ctx.beginPath(); ctx.arc(hx - u * .12, hy - u * .2, u * .028, 0, 7); ctx.arc(hx + u * .12, hy - u * .2, u * .028, 0, 7); ctx.fill();
-  } else if (id === 'zauber') {
-    ctx.fillStyle = '#7b2cbf';
-    ctx.beginPath(); ctx.ellipse(hx, hy - u * .15, u * .3, u * .06, 0, 0, 7); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(hx - u * .18, hy - u * .16); ctx.lineTo(hx - d * u * .14, hy - u * .72); ctx.lineTo(hx + u * .18, hy - u * .16); ctx.fill();
-    star(hx - u * .02, hy - u * .36, u * .07, 1); star(hx + u * .07, hy - u * .23, u * .05, 1);
+  } else if (id === 'feuerwehr') {
+    ctx.fillStyle = '#d62828';
+    ctx.beginPath(); ctx.ellipse(hx + d * u * .05, hy - u * .14, u * .32, u * .06, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(hx, hy - u * .16, u * .22, u * .26, 0, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = '#ffd60a'; ctx.beginPath(); ctx.arc(hx + d * u * .1, hy - u * .26, u * .06, 0, 7); ctx.fill();
   } else if (id === 'pirat') {
     ctx.fillStyle = '#1b1b1b'; ctx.beginPath(); ctx.moveTo(hx - u * .34, hy - u * .12);
     ctx.quadraticCurveTo(hx, hy - u * .62, hx + u * .34, hy - u * .12); ctx.quadraticCurveTo(hx, hy - u * .24, hx - u * .34, hy - u * .12); ctx.fill();
@@ -624,12 +625,29 @@ function draw() {
     const flash = clearing && clearing.rows.includes(y) && Math.floor(clearing.t * 10) % 2 === 0;
     cell(FX + x * S, FY + y * S + sink, flash ? '#ffffff' : c, wipe ? Math.max(0, 1 - wipe.t) : 1);
   }
+  drawNext();
   if (piece) drawPiece();
   if (gift) drawGift();
   drawDog();
   drawMan();
   drawBird();
   drawParts();
+}
+
+// Vorschau rechts neben dem Feld, unter Kalles Platz
+function drawNext() {
+  const k = 0.34, { m, c } = SHAPES[nextShape], cs = cells(m);
+  const minX = Math.min(...cs.map(p => p[0])), maxX = Math.max(...cs.map(p => p[0]));
+  const minY = Math.min(...cs.map(p => p[1])), maxY = Math.max(...cs.map(p => p[1]));
+  const bx = FX + COLS * S + S * 0.08, bw = S * 1.44, by = FY + S * 0.1, bh = S * 1.5;
+  ctx.fillStyle = '#fffdf6'; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, S * 0.15); ctx.fill();
+  ctx.fillStyle = '#8d6e63'; ctx.font = `bold ${S * 0.26 | 0}px system-ui, sans-serif`; ctx.textAlign = 'center';
+  ctx.fillText('Nächster', bx + bw / 2, by + S * 0.32); ctx.textAlign = 'left';
+  ctx.save();
+  ctx.translate(bx + bw / 2 - (minX + maxX + 1) / 2 * S * k, by + S * 0.92 - (minY + maxY + 1) / 2 * S * k);
+  ctx.scale(k, k);
+  for (const [x, y] of cs) cell(x * S, y * S, c);
+  ctx.restore();
 }
 
 // ---------- Größe ----------
