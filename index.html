@@ -106,6 +106,11 @@ const GIFTS = [
   { id: 'regenbogen', at: 33, icon: '🌈', short: 'Regenbogen',  name: 'Regenbogen-Steine',   kind: 'fx' },
   { id: 'blumen',     at: 42, icon: '🌸', short: 'Blumen',      name: 'einen Blumenkranz',   kind: 'hat' },
   { id: 'party',      at: 52, icon: '🥳', short: 'Partyhut',    name: 'einen Partyhut',      kind: 'hat' },
+  { id: 'koch',       at: 63, icon: '👨‍🍳', short: 'Kochmütze',  name: 'eine Kochmütze',      kind: 'hat' },
+  { id: 'cowboy',     at: 75, icon: '🤠', short: 'Cowboyhut',   name: 'einen Cowboyhut',     kind: 'hat' },
+  { id: 'bauhelm',    at: 88, icon: '👷', short: 'Bauhelm',     name: 'einen Bauarbeiterhelm', kind: 'hat' },
+  { id: 'brille',     at: 102, icon: '😎', short: 'Sonnenbrille', name: 'eine Sonnenbrille',  kind: 'hat' },
+  { id: 'astronaut',  at: 118, icon: '🧑‍🚀', short: 'Raumhelm',  name: 'einen Raumfahrerhelm', kind: 'hat' },
 ];
 // Sammlung bleibt auf dem Gerät (fällt still auf leer zurück, wenn der Speicher gesperrt ist)
 const save = { stars: 0, hat: '', off: {} };
@@ -119,6 +124,20 @@ const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let S, FX, FY, RAIL, HOME;          // Zellgröße, Feld-Ursprung, Schiene (Fußhöhe), Kalles Platz
 let board, piece, nextShape = Math.floor(Math.random() * SHAPES.length), acc = 0, dropping = false, clearing = null, wipe = null, time = 0;
 let gift = null, giftQueue = [], parts = [];
+// Level: alle ROWS_PER_LEVEL Reihen eine neue Welt und etwas schneller (gilt pro Spielrunde, nicht gespeichert)
+const ROWS_PER_LEVEL = 5, LEVEL_SPEEDUP = 0.88, MIN_FALL_MS = 350;
+let level = 1, rowsDone = 0;
+const WORLDS = [
+  { name: 'Wiese',      icon: '🌼', sky: ['#a8dcff', '#e8f6ff'], field: '#fffdf6' },
+  { name: 'Strand',     icon: '🏖️', sky: ['#9bd8ff', '#fff3d6'], field: '#fffaf0' },
+  { name: 'Bauernhof',  icon: '🐄', sky: ['#b5e2ff', '#f1f9e8'], field: '#fdf8ef' },
+  { name: 'Winter',     icon: '⛄', sky: ['#c9d8ea', '#f2f7fc'], field: '#f9fcff' },
+  { name: 'Unterwasser', icon: '🐠', sky: ['#1f7ea8', '#8fd3e8'], field: '#effaff' },
+  { name: 'Stadt',      icon: '🏙️', sky: ['#9ec9f0', '#eaf3fb'], field: '#fbf8f3' },
+  { name: 'Abendrot',   icon: '🌅', sky: ['#ff9e7a', '#ffe1b8'], field: '#fff6ee' },
+  { name: 'Weltraum',   icon: '🚀', sky: ['#0b1340', '#2b2f77'], field: '#f4f1ff' },
+];
+const world = () => WORLDS[(level - 1) % WORLDS.length];
 let hint = null, idleT = 0, turns = 0;   // Kalles Tipp: Zielplatz, Zeit ohne Eingabe, Drehungen je Stein
 const HINT_IDLE = 6, HINT_TURNS = 4;     // Tipp nach 6 s Zögern oder ab dem 4. Drehen
 const dog = { x: 0, dir: -1, moving: false };
@@ -295,6 +314,11 @@ function update(dt) {
       if (on('vogel')) sound('piep');
       clearing = null;
       addStars(plus);
+      if ((rowsDone += n) >= ROWS_PER_LEVEL) {
+        rowsDone -= ROWS_PER_LEVEL; level++; setSpeed();
+        say(`Level ${level}: ${world().name}! ${world().icon}`); sound('fanfare');
+        confetti(FX + COLS * S / 2, FY + S * 2, 60);
+      }
       if (giftQueue.length) startGift(); else spawn();
     }
   } else if (gift) {
@@ -652,6 +676,28 @@ function drawHat(id, hx, hy, u) {
     ctx.fillStyle = '#4cc9f0'; for (let i = 0; i < 4; i++) ctx.fillRect(hx - u * .2, hy - u * (.27 + i * .12), u * .4, u * .05);
     ctx.restore();
     ctx.fillStyle = '#ffd60a'; ctx.beginPath(); ctx.arc(hx, hy - u * .69, u * .065, 0, 7); ctx.fill();
+  } else if (id === 'koch') {
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
+    ctx.fillRect(hx - u * .17, hy - u * .3, u * .34, u * .14);
+    for (const [px, r] of [[-.13, .13], [0, .16], [.13, .13]]) { ctx.beginPath(); ctx.arc(hx + px * u, hy - u * .4, r * u, 0, 7); ctx.fill(); ctx.stroke(); }
+  } else if (id === 'cowboy') {
+    ctx.fillStyle = '#a0522d';
+    ctx.beginPath(); ctx.ellipse(hx, hy - u * .15, u * .38, u * .07, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(hx - u * .17, hy - u * .42, u * .34, u * .28, u * .08); ctx.fill();
+    ctx.fillStyle = '#5d4037'; ctx.fillRect(hx - u * .17, hy - u * .22, u * .34, u * .05);
+  } else if (id === 'bauhelm') {
+    ctx.fillStyle = '#ffbe0b';
+    ctx.beginPath(); ctx.ellipse(hx, hy - u * .13, u * .3, u * .05, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(hx, hy - u * .14, u * .23, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = '#e09f00'; ctx.fillRect(hx - u * .03, hy - u * .37, u * .06, u * .23);
+  } else if (id === 'brille') {
+    ctx.fillStyle = '#1b1b1b';
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.roundRect(hx + s * u * .08 - u * .07, hy - u * .06, u * .14, u * .09, u * .03); ctx.fill(); }
+    ctx.fillRect(hx - u * .02, hy - u * .04, u * .04, u * .02);
+  } else if (id === 'astronaut') {
+    ctx.fillStyle = 'rgba(180,220,255,.35)'; ctx.strokeStyle = '#fff'; ctx.lineWidth = u * .05;
+    ctx.beginPath(); ctx.arc(hx, hy - u * .02, u * .32, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(hx - u * .12, hy - u * .2, u * .06, u * .03, -.6, 0, 7); ctx.fill();
   } else {                            // Mütze mit Schirm in Blickrichtung
     ctx.fillStyle = '#ffbe0b';
     ctx.beginPath(); ctx.arc(hx, hy - u * 0.08, u * 0.22, Math.PI, 0); ctx.fill();
@@ -732,8 +778,8 @@ function pieceCenterX() {
 function draw() {
   const W = cv.width / devicePixelRatio, H = cv.height / devicePixelRatio;
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#e8f6ff'; ctx.beginPath(); ctx.roundRect(0, 0, W, H, 14); ctx.fill();
-  ctx.fillStyle = '#fffdf6'; ctx.fillRect(FX, FY, COLS * S, ROWS * S);
+  drawWorld(W, H);
+  ctx.fillStyle = world().field; ctx.fillRect(FX, FY, COLS * S, ROWS * S);
   ctx.strokeStyle = '#efe6d2'; ctx.lineWidth = 1;
   for (let x = 1; x < COLS; x++) { ctx.beginPath(); ctx.moveTo(FX + x * S, FY); ctx.lineTo(FX + x * S, FY + ROWS * S); ctx.stroke(); }
   // Schiene für Kalle
@@ -745,6 +791,8 @@ function draw() {
     cell(FX + x * S, FY + y * S + sink, flash ? '#ffffff' : c, wipe ? Math.max(0, 1 - wipe.t) : 1);
   }
   drawNext();
+  drawLevel();
+  if (level % WORLDS.length === 4) drawSnow(W, H);
   drawHint();
   if (piece) drawPiece();
   if (gift) drawGift();
@@ -752,6 +800,99 @@ function draw() {
   drawMan();
   drawBird();
   drawParts();
+}
+
+// ---------- Welten ----------
+function blob(x, y, r, c) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); }
+function cloud(x, y, k) { for (const [dx, dy, r] of [[0, 0, .35], [.35, -.12, .42], [.75, 0, .32]]) blob(x + dx * S * k, y + dy * S * k, r * S * k, 'rgba(255,255,255,.9)'); }
+function hills(c, base, amp, ph, W) {
+  ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(0, RAIL);
+  for (let x = 0; x <= W; x += 8) ctx.lineTo(x, base - amp * (0.6 + 0.4 * Math.sin(x / S * 0.9 + ph)));
+  ctx.lineTo(W, RAIL); ctx.fill();
+}
+function drawWorld(W, H) {
+  const w = world(), g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, w.sky[0]); g.addColorStop(0.35, w.sky[1]); g.addColorStop(1, w.sky[1]);
+  ctx.fillStyle = g; ctx.beginPath(); ctx.roundRect(0, 0, W, H, 14); ctx.fill();
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, RAIL); ctx.clip();
+  const drift = x => ((x + time * S * 0.15) % (W + 2 * S)) - S;
+  switch (w.name) {
+    case 'Wiese':
+      blob(W * .55, S * .6, S * .4, '#ffd60a'); cloud(drift(S), S * .5, 1); cloud(drift(W * .6), S * .9, .7);
+      hills('#95d5b2', RAIL, S * .6, 0, W); hills('#52b788', RAIL, S * .35, 2, W);
+      for (let i = 0; i < 9; i++) blob((i * 1.37 % 1) * W + S * .3, RAIL - S * (.12 + (i % 3) * .06), S * .07, ['#ff6b6b', '#ffbe0b', '#ffffff'][i % 3]);
+      break;
+    case 'Strand':
+      blob(W * .5, S * .55, S * .38, '#ffbe0b'); cloud(drift(S * 2), S * .45, .8);
+      ctx.fillStyle = '#48cae4'; ctx.fillRect(0, RAIL - S * .75, W, S * .45);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+      for (let x = (time * S * .4) % (S * .8) - S; x < W; x += S * .8) { ctx.beginPath(); ctx.arc(x, RAIL - S * .55, S * .15, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke(); }
+      ctx.fillStyle = '#f6d58e'; ctx.fillRect(0, RAIL - S * .3, W, S * .3);
+      break;
+    case 'Bauernhof': {
+      cloud(drift(S * 3), S * .45, .9); hills('#a7c957', RAIL, S * .45, 1, W);
+      const bx = W * .52;
+      ctx.fillStyle = '#c1121f'; ctx.fillRect(bx, RAIL - S * .9, S * .9, S * .9);
+      ctx.beginPath(); ctx.moveTo(bx - S * .1, RAIL - S * .9); ctx.lineTo(bx + S * .45, RAIL - S * 1.35); ctx.lineTo(bx + S, RAIL - S * .9); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillRect(bx + S * .3, RAIL - S * .5, S * .3, S * .5);
+      ctx.strokeStyle = '#bc8a5f'; ctx.lineWidth = S * .06;
+      for (let x = S * .2; x < W; x += S * .45) { ctx.beginPath(); ctx.moveTo(x, RAIL); ctx.lineTo(x, RAIL - S * .35); ctx.stroke(); }
+      ctx.beginPath(); ctx.moveTo(0, RAIL - S * .25); ctx.lineTo(W, RAIL - S * .25); ctx.stroke();
+      break;
+    }
+    case 'Winter':
+      cloud(drift(S), S * .5, 1); hills('#ffffff', RAIL, S * .7, .5, W); hills('#e3edf7', RAIL, S * .35, 2.5, W);
+      blob(W * .55, RAIL - S * .35, S * .22, '#fff'); blob(W * .55, RAIL - S * .72, S * .16, '#fff');
+      blob(W * .55 + S * .05, RAIL - S * .75, S * .03, '#3b2f2f');
+      ctx.fillStyle = '#ff9f1c'; ctx.beginPath(); ctx.moveTo(W * .55 + S * .1, RAIL - S * .7); ctx.lineTo(W * .55 + S * .3, RAIL - S * .67); ctx.lineTo(W * .55 + S * .1, RAIL - S * .64); ctx.fill();
+      break;
+    case 'Unterwasser':
+      for (let i = 0; i < 3; i++) {
+        const fx = ((time * S * (.5 + i * .2) + i * W / 3) % (W + S)) - S * .5, fy = S * (.5 + i * .4);
+        ctx.fillStyle = ['#ffbe0b', '#ff6b6b', '#b388eb'][i];
+        ctx.beginPath(); ctx.ellipse(fx, fy, S * .25, S * .14, 0, 0, 7); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(fx - S * .2, fy); ctx.lineTo(fx - S * .4, fy - S * .12); ctx.lineTo(fx - S * .4, fy + S * .12); ctx.fill();
+        blob(fx + S * .12, fy - S * .03, S * .03, '#1b1b1b');
+      }
+      ctx.fillStyle = '#f6d58e'; ctx.fillRect(0, RAIL - S * .2, W, S * .2);
+      ctx.strokeStyle = '#2d6a4f'; ctx.lineWidth = S * .08;
+      for (let x = S * .4; x < W; x += S * 1.7) { ctx.beginPath(); ctx.moveTo(x, RAIL); ctx.quadraticCurveTo(x + Math.sin(time * 2 + x) * S * .3, RAIL - S * .5, x, RAIL - S * .9); ctx.stroke(); }
+      break;
+    case 'Stadt':
+      cloud(drift(S * 2), S * .4, .8);
+      for (let x = 0, i = 0; x < W; x += S * .9, i++) {
+        const h = S * (.6 + ((i * 7) % 5) * .2);
+        ctx.fillStyle = ['#8d99ae', '#adb5bd', '#6c757d'][i % 3]; ctx.fillRect(x, RAIL - h, S * .8, h);
+        ctx.fillStyle = '#ffe066';
+        for (let wy = RAIL - h + S * .15; wy < RAIL - S * .2; wy += S * .3) for (const wx of [.15, .5]) ctx.fillRect(x + wx * S, wy, S * .15, S * .15);
+      }
+      break;
+    case 'Abendrot':
+      blob(W * .5, RAIL - S * .2, S * .55, '#ff7b00');
+      hills('#9d4edd', RAIL, S * .5, 1.5, W); hills('#7b2cbf', RAIL, S * .3, 3, W);
+      break;
+    case 'Weltraum':
+      for (let i = 0; i < 30; i++) blob((i * 0.7548 % 1) * W, (i * 0.381 % 1) * RAIL, S * .03 * (1 + Math.sin(time * 3 + i)), '#fff');
+      blob(W * .55, S * .8, S * .4, '#f4a261');
+      ctx.strokeStyle = '#e9c46a'; ctx.lineWidth = S * .06;
+      ctx.beginPath(); ctx.ellipse(W * .55, S * .8, S * .65, S * .15, -.3, 0, 7); ctx.stroke();
+      break;
+  }
+  ctx.restore();
+}
+function drawSnow(W, H) {
+  for (let i = 0; i < 40; i++) {
+    const x = ((i * 0.618 % 1) * W + Math.sin(time + i) * S * .3), y = ((i * 0.381 % 1) * H + time * S * .6) % H;
+    blob(x, y, S * .05, 'rgba(255,255,255,.85)');
+  }
+}
+function drawLevel() {
+  const w = world(), txt = `Level ${level} · ${w.name}`;
+  ctx.font = `bold ${S * .3 | 0}px "Trebuchet MS", sans-serif`;
+  const tw = ctx.measureText(txt).width, x = S * .2, y = S * .15, bw = Math.max(tw, ROWS_PER_LEVEL * S * .28) + S * .3;
+  ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.beginPath(); ctx.roundRect(x, y, bw, S * .8, S * .2); ctx.fill();
+  ctx.fillStyle = '#3b2f2f'; ctx.fillText(txt, x + S * .15, y + S * .38);
+  for (let i = 0; i < ROWS_PER_LEVEL; i++) blob(x + S * (.27 + i * .28), y + S * .6, S * .09, i < rowsDone ? '#ff9f1c' : '#e0d6c8');
 }
 
 // Vorschau rechts neben dem Feld, unter Kalles Platz
@@ -1023,7 +1164,7 @@ document.addEventListener('keydown', e => {
 });
 // Tempo-Regler: Stufe 1 = 3 s pro Reihe … Stufe 10 = 0,45 s
 const speedInput = document.getElementById('speed');
-const setSpeed = () => fallMs = Math.round(3000 * Math.pow(0.81, speedInput.value - 1));
+const setSpeed = () => fallMs = Math.max(MIN_FALL_MS, Math.round(3000 * Math.pow(0.81, speedInput.value - 1) * Math.pow(LEVEL_SPEEDUP, level - 1)));
 speedInput.addEventListener('input', setSpeed); setSpeed();
 
 function setPaused(p, box = 'pauseBox') {

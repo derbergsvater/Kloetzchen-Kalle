@@ -10,6 +10,7 @@ Idee + Machbarkeit: `../Ideen/ideen.md` („Kinder-Tetris mit Dreh-Männchen“)
 - Anreiz: Sterne (Bonus bei Mehrfach-Reihen) füllen den Balken bis zum nächsten Geschenk (`GIFTS`: Hüte, Hund, Vogel, Regenbogen; bewusst nichts mit Zaubern/Spiritismus). Sammlung in `localStorage['kalle']`, Schatzkiste 🧰 zum Auswählen.
 - Hilfe 🔨 / H: Kalle seilt sich ab und zertrümmert oben Reihen (`smashRow`), bis höchstens die Hälfte belegt ist; keine Sterne dafür.
 - Tipp: nach `HINT_IDLE` s ohne Eingabe oder ab `HINT_TURNS`× Drehen zeigt Kalle den besten Platz (`bestSpot`: alle Drehungen × Spalten, Bewertung Reihen/Höhe/Löcher/Zacken), orange gestrichelt + Pfeil.
+- Level: alle `ROWS_PER_LEVEL` (5) Reihen neue Welt (`WORLDS`, 8 Stück, `drawWorld`) und Fallzeit ×`LEVEL_SPEEDUP` (0,88, min. `MIN_FALL_MS`); Level gilt pro Runde, Geschenke bleiben gespeichert.
 - Tastatur: ← → schieben, ↑ drehen bzw. Fallen abbrechen, ↓ (oder Leertaste) fallen; Schieben geht immer, P/Esc Pause (Legende im Pause-Fenster und auf den Knöpfen).
 - Ton: Web Audio, auf dem iPad erst nach Berührung (`unlock`); `navigator.audioSession.type = "playback"` damit es auch bei Stummschaltung klingt.
 - Name/Optik bewusst nicht „Tetris“ (geschützte Marke).
