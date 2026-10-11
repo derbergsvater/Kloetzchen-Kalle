@@ -15,7 +15,9 @@
   .tempo { display:flex; align-items:center; gap:4px; font-size:22px; }
   .tempo input { width:130px; accent-color:#ff9f1c; }
   header h1 { font-size:20px; margin:0 auto 0 0; }
-  #stars { font-size:22px; font-weight:bold; min-width:64px; }
+  .progress { display:flex; align-items:center; gap:6px; font-size:22px; font-weight:bold; }
+  #bar { width:90px; height:14px; background:#fff; border:2px solid #ffbe0b; border-radius:8px; overflow:hidden; }
+  #bar i { display:block; height:100%; width:0; background:linear-gradient(90deg,#ffd60a,#ff9f1c); transition:width .6s; }
   header button { font-size:24px; border:3px solid transparent; border-radius:12px; background:#fff; padding:2px 8px; }
   main { flex:1; display:flex; justify-content:center; align-items:center; min-height:0; padding:6px; }
   canvas { display:block; border-radius:14px; }
@@ -30,20 +32,26 @@
   #msg { position:fixed; left:50%; top:40%; transform:translate(-50%,-50%); font-size:34px; font-weight:bold;
     background:#fff; padding:14px 24px; border-radius:20px; box-shadow:0 6px 20px rgba(0,0,0,.2);
     pointer-events:none; opacity:0; transition:opacity .4s; text-align:center; }
-  #pauseBox { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(40,60,80,.45); }
-  #pauseBox.on { display:flex; }
-  #pauseBox div { background:#fff; border-radius:24px; padding:24px 32px; text-align:center; font-size:20px; box-shadow:0 8px 30px rgba(0,0,0,.25); }
-  #pauseBox b { display:block; font-size:40px; margin-bottom:12px; }
-  #pauseBox table { margin:12px auto; text-align:left; border-spacing:12px 6px; }
+  .overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(40,60,80,.45); }
+  .overlay.on { display:flex; }
+  .overlay > div { background:#fff; border-radius:24px; padding:24px 20px; text-align:center; font-size:20px; box-shadow:0 8px 30px rgba(0,0,0,.25); max-width:94vw; }
+  .overlay b { display:block; font-size:34px; margin-bottom:12px; }
+  .overlay table { margin:12px auto; text-align:left; border-spacing:12px 6px; }
+  #tiles { display:grid; grid-template-columns:repeat(4, minmax(60px, 84px)); gap:10px; margin:16px auto; justify-content:center; }
+  #tiles button { font-size:34px; height:84px; border-radius:16px; border:3px solid #eee; background:#fffdf6;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--ink); }
+  #tiles button.on { border-color:#ff9f1c; background:#ffe8c2; }
+  #tiles button:disabled { opacity:.45; }
   kbd { background:#eee; border:1px solid #ccc; border-bottom-width:3px; border-radius:6px; padding:1px 8px; font-family:inherit; }
 </style>
 </head>
 <body>
 <header>
   <h1>Klötzchen-Kalle</h1>
-  <span id="stars">⭐ 0</span>
+  <span class="progress"><span id="stars">⭐ 0</span><span id="bar"><i></i></span><span id="gift">🎁</span></span>
   <label class="tempo" title="Tempo">🐌<input id="speed" type="range" min="1" max="10" value="2">🐇</label>
   <button id="music" title="Musik an/aus">🎵</button>
+  <button id="chestBtn" title="Schatzkiste">🧰</button>
   <button id="pause" title="Pause (Taste P)">⏸</button>
 </header>
 <main><canvas id="c"></canvas></main>
@@ -54,7 +62,7 @@
   <button id="drop" aria-label="fallen lassen">⬇<small>Leertaste</small></button>
 </footer>
 <div id="msg"></div>
-<div id="pauseBox"><div>
+<div id="pauseBox" class="overlay"><div>
   <b>⏸ Pause</b>
   Tippen oder <kbd>P</kbd> zum Weiterspielen
   <table>
@@ -63,6 +71,12 @@
     <tr><td><kbd>Leertaste</kbd></td><td>Stein fallen lassen</td></tr>
     <tr><td><kbd>P</kbd></td><td>Pause</td></tr>
   </table>
+</div></div>
+<div id="chest" class="overlay"><div>
+  <b>🧰 Kalles Schatzkiste</b>
+  Tippe auf einen Schatz, um ihn anzuziehen.
+  <section id="tiles"></section>
+  <small>Daneben tippen zum Weiterspielen</small>
 </div></div>
 <script>
 const COLS = 8, ROWS = 14;          // ponytail: schmaler als das Original (10), leichter zu füllen
@@ -79,9 +93,29 @@ const T_WIND = 0.18, T_PUSH = 0.38, T_REL = 0.22, TURN = T_WIND + T_PUSH + T_REL
 // Kalles Füße relativ zum Griffpunkt (in Zellen): neben dem Stein → oben drauf
 const OFF0 = [-0.42, 0.55], OFF1 = [-0.4, 0.1];
 
+// Geschenke für Kalle: ab so vielen Sternen (insgesamt) freigeschaltet
+const GIFTS = [
+  { id: 'krone',      at: 3,  icon: '👑', short: 'Krone',       name: 'eine Krone',          kind: 'hat' },
+  { id: 'hund',       at: 7,  icon: '🐶', short: 'Bello',       name: 'Hund Bello',          kind: 'pet' },
+  { id: 'zauber',     at: 12, icon: '🧙', short: 'Zauberhut',   name: 'einen Zauberhut',     kind: 'hat' },
+  { id: 'vogel',      at: 18, icon: '🐦', short: 'Piep',        name: 'Vogel Piep',          kind: 'pet' },
+  { id: 'pirat',      at: 25, icon: '🏴‍☠️', short: 'Piratenhut', name: 'einen Piratenhut',    kind: 'hat' },
+  { id: 'regenbogen', at: 33, icon: '🌈', short: 'Regenbogen',  name: 'Regenbogen-Steine',   kind: 'fx' },
+  { id: 'blumen',     at: 42, icon: '🌸', short: 'Blumen',      name: 'einen Blumenkranz',   kind: 'hat' },
+  { id: 'party',      at: 52, icon: '🥳', short: 'Partyhut',    name: 'einen Partyhut',      kind: 'hat' },
+];
+// Sammlung bleibt auf dem Gerät (fällt still auf leer zurück, wenn der Speicher gesperrt ist)
+const save = { stars: 0, hat: '', off: {} };
+try { Object.assign(save, JSON.parse(localStorage.getItem('kalle') || '{}')); } catch (e) {}
+const store = () => { try { localStorage.setItem('kalle', JSON.stringify(save)); } catch (e) {} };
+const have = id => save.stars >= GIFTS.find(g => g.id === id).at;
+const on = id => have(id) && !save.off[id];
+
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let S, FX, FY, RAIL, HOME;          // Zellgröße, Feld-Ursprung, Schiene (Fußhöhe), Kalles Platz
-let board, piece, lastShape = -1, acc = 0, dropping = false, clearing = null, wipe = null, stars = 0, time = 0;
+let board, piece, lastShape = -1, acc = 0, dropping = false, clearing = null, wipe = null, time = 0;
+let gift = null, giftQueue = [], parts = [];
+const dog = { x: 0, dir: -1, moving: false };
 let fallMs = 2400, paused = false;
 const man = { x:0, y:0, ax:0, dir:-1, state:'home', t:0, queue:0, ok:false, kick:0, cheer:0,
               walkT:0, ph:0, moving:false, lean:0, fired:{}, say:'', sayT:0, blink:0 };
@@ -104,14 +138,15 @@ function spawn() {
   lastShape = i;
   const m = SHAPES[i].m.map(r => r.slice());
   const top = Math.min(...cells(m).map(c => c[1]));
-  piece = { m, c: SHAPES[i].c, x: Math.floor((COLS - m.length) / 2), y: -top };
+  piece = { m, c: SHAPES[i].c, x: Math.floor((COLS - m.length) / 2), y: -top, rainbow: on('regenbogen') };
   acc = 0;
   if (!fits(piece.m, piece.x, piece.y)) { piece = null; wipe = { t: 0 }; say('Alles voll!<br>Weiter geht\'s ⭐'); sound('full'); }
   else sound('pop');
 }
 
 function lock() {
-  for (const [x, y] of cells(piece.m)) if (piece.y + y >= 0) board[piece.y + y][piece.x + x] = piece.c;
+  for (const [x, y] of cells(piece.m)) if (piece.y + y >= 0)
+    board[piece.y + y][piece.x + x] = piece.rainbow ? `hsl(${((piece.x + x) * 45 + (piece.y + y) * 70) % 360} 80% 65%)` : piece.c;
   piece = null; dropping = false; man.queue = 0;
   if (man.state === 'follow') man.state = 'gohome';
   sound('land');
@@ -219,11 +254,30 @@ function update(dt) {
   } else if (clearing) {
     clearing.t += dt;
     if (clearing.t > 0.6) {
-      for (const y of clearing.rows) { board.splice(y, 1); board.unshift(Array(COLS).fill(null)); }
-      stars += clearing.rows.length;
-      document.getElementById('stars').textContent = '⭐ ' + stars;
-      say(['Super!', 'Toll!', 'Klasse!', 'Juhu!'][Math.floor(Math.random() * 4)]);
-      man.cheer = 1.2; talk('Juhu!', 1.2); sound('juhu'); clearing = null; spawn();
+      const rows = clearing.rows, n = rows.length, plus = [0, 1, 3, 5, 8][n];   // mehrere Reihen auf einmal = Bonus
+      for (const y of rows) confetti(FX + COLS * S / 2, FY + (y + .5) * S, 14 * n);
+      floatText('+' + plus + ' ⭐', FX + COLS * S / 2, FY + rows[0] * S);
+      for (const y of rows) { board.splice(y, 1); board.unshift(Array(COLS).fill(null)); }
+      say(n > 1 ? ['', '', 'Doppel-Reihe! 🎉', 'Dreifach! 🤩', 'Super-Vierer! 🏆'][n] : pick(['Super!', 'Toll!', 'Klasse!', 'Juhu!']));
+      man.cheer = 1.2; talk('Juhu!', 1.2); sound('juhu');
+      if (on('hund')) sound('wuff');
+      if (on('vogel')) sound('piep');
+      clearing = null;
+      addStars(plus);
+      if (giftQueue.length) startGift(); else spawn();
+    }
+  } else if (gift) {
+    gift.t += dt;
+    if (!gift.opened && gift.t >= 1.3) {
+      gift.opened = true; sound('fanfare'); man.cheer = 1.6; talk('Juhu!', 1.5);
+      confetti(HOME - 2.2 * S, RAIL - S * .5, 70);
+    }
+    if (gift.t >= 3.2) {
+      const g = gift.g;
+      if (g.kind === 'hat') save.hat = g.id;
+      store(); say(`Kalle hat ${g.name}! 🎉`);
+      gift = null;
+      if (giftQueue.length) startGift(); else spawn();
     }
   } else if (piece && !busy()) {
     acc += dt * 1000;
@@ -234,7 +288,48 @@ function update(dt) {
     }
   }
   updateMan(dt);
+  updateDog(dt);
+  for (const p of parts) {
+    if (!p.txt) p.vy += 14 * S * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.r += dt * 8; p.life -= dt;
+  }
+  parts = parts.filter(p => p.life > 0);
   music();
+}
+
+// ---------- Belohnungen ----------
+function addStars(n) {
+  const before = save.stars;
+  save.stars += n; store();
+  giftQueue.push(...GIFTS.filter(g => g.at > before && g.at <= save.stars));
+  hud();
+}
+function hud() {
+  const next = GIFTS.find(g => g.at > save.stars), prev = GIFTS.filter(g => g.at <= save.stars).pop();
+  const from = prev ? prev.at : 0;
+  document.getElementById('stars').textContent = '⭐ ' + save.stars;
+  document.querySelector('#bar i').style.width = next ? (save.stars - from) / (next.at - from) * 100 + '%' : '100%';
+  document.getElementById('gift').textContent = next ? '🎁' : '🏆';
+}
+function startGift() {
+  gift = { g: giftQueue.shift(), t: 0, opened: false };
+  if (man.state !== 'home') man.state = 'gohome';
+  sound('whoosh'); say('Ein Geschenk! 🎁');
+}
+function confetti(x, y, n) {
+  for (let i = 0; i < n; i++) parts.push({ x, y, vx: (Math.random() - .5) * 10 * S, vy: -(Math.random() * 7 + 2) * S,
+    c: `hsl(${rnd(360)} 90% 60%)`, r: Math.random() * 6, life: 1.4 + Math.random() * .6 });
+}
+const floatText = (txt, x, y) => parts.push({ txt, x, y, vx: 0, vy: -1.2 * S, r: 0, life: 1.4 });
+function updateDog(dt) {
+  if (!on('hund')) return;
+  const onRope = ['down', 'turn', 'up'].includes(man.state);
+  let tx = man.state === 'home' || man.state === 'gohome' && !piece ? HOME - .85 * S : (onRope ? man.ax : man.x) - man.dir * .8 * S;
+  tx = Math.max(S * .4, Math.min(tx, HOME + .5 * S));
+  if (!dog.x) dog.x = tx;
+  const d = tx - dog.x, sp = 10 * S * dt;
+  dog.moving = Math.abs(d) > sp;
+  if (dog.moving) { dog.x += Math.sign(d) * sp; dog.dir = Math.sign(d); } else { dog.x = tx; dog.dir = man.dir; }
 }
 
 function move(dx) {
@@ -255,6 +350,20 @@ function cell(x, y, color, alpha = 1) {
   ctx.fillStyle = 'rgba(255,255,255,.35)';
   ctx.beginPath(); ctx.roundRect(x + p * 2.5, y + p * 2.5, S * 0.5, S * 0.18, r / 2); ctx.fill();
   ctx.globalAlpha = 1;
+}
+
+function face(x, y, look) {
+  const u = S, cx = x + u / 2, cy = y + u / 2;
+  const wow = man.state === 'turn' || dropping, blink = (time % 3.3) < .12;
+  ctx.strokeStyle = '#3b2f2f'; ctx.lineWidth = u * .045; ctx.lineCap = 'round';
+  for (const s of [-1, 1]) {
+    if (blink) { ctx.beginPath(); ctx.moveTo(cx + s * u * .17 - u * .06, cy - u * .06); ctx.lineTo(cx + s * u * .17 + u * .06, cy - u * .06); ctx.stroke(); continue; }
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx + s * u * .17, cy - u * .06, u * .1, 0, 7); ctx.fill();
+    ctx.fillStyle = '#3b2f2f'; ctx.beginPath(); ctx.arc(cx + s * u * .17 + look * u * .035, cy - u * .05, u * .05, 0, 7); ctx.fill();
+  }
+  ctx.fillStyle = '#3b2f2f'; ctx.beginPath();
+  if (wow) { ctx.ellipse(cx, cy + u * .17, u * .07, u * .09, 0, 0, 7); ctx.fill(); }
+  else { ctx.arc(cx, cy + u * .08, u * .12, .3, Math.PI - .3); ctx.stroke(); }
 }
 
 function star(x, y, r, alpha) {
@@ -278,7 +387,13 @@ function drawPiece() {
   }
   const cx = FX + (piece.x + n / 2) * S, cy = FY + (py + n / 2) * S;
   ctx.save(); ctx.translate(cx, cy); ctx.rotate(turnAngle());
-  for (const [x, y] of cells(piece.m)) cell(x * S - n / 2 * S, y * S - n / 2 * S, piece.c);
+  const cs = cells(piece.m);
+  for (const [x, y] of cs) cell(x * S - n / 2 * S, y * S - n / 2 * S,
+    piece.rainbow ? `hsl(${(x * 50 + y * 80 + time * 120) % 360 | 0} 85% 62%)` : piece.c);
+  // Gesicht auf der mittleren Zelle
+  const mx = cs.reduce((a, c) => a + c[0], 0) / cs.length, my = cs.reduce((a, c) => a + c[1], 0) / cs.length;
+  const [fx, fy] = cs.reduce((b, c) => Math.hypot(c[0] - mx, c[1] - my) < Math.hypot(b[0] - mx, b[1] - my) ? c : b);
+  face(fx * S - n / 2 * S, fy * S - n / 2 * S, man.x < cx ? -1 : 1);
   ctx.restore();
   // Funkeln nach geschaffter Drehung
   if (man.state === 'turn' && man.ok && man.t > T_WIND + T_PUSH) {
@@ -376,11 +491,7 @@ function drawMan() {
     const dy = ((time * 2) % 1) * u * 0.25;
     ctx.beginPath(); ctx.arc(hx - man.dir * u * 0.26, hy - u * 0.08 + dy, u * 0.035, 0, 7); ctx.fill();
   }
-  // Mütze mit Schirm in Blickrichtung
-  ctx.fillStyle = '#ffbe0b';
-  ctx.beginPath(); ctx.arc(hx, hy - u * 0.08, u * 0.22, Math.PI, 0); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(hx + man.dir * u * 0.2, hy - u * 0.09, u * 0.14, u * 0.035, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = '#e63946'; ctx.beginPath(); ctx.arc(hx, hy - u * 0.3, u * 0.045, 0, 7); ctx.fill();
+  drawHat(save.hat, hx, hy, u);
   ctx.restore();
   // Sprechblase
   if (man.sayT > 0) {
@@ -393,6 +504,106 @@ function drawMan() {
     ctx.globalAlpha = 1;
   }
 }
+function drawHat(id, hx, hy, u) {
+  const d = man.dir;
+  if (id === 'krone') {
+    ctx.fillStyle = '#ffd60a'; ctx.beginPath();
+    for (const [px, py] of [[-.2, -.14], [-.2, -.4], [-.1, -.27], [0, -.44], [.1, -.27], [.2, -.4], [.2, -.14]]) ctx.lineTo(hx + px * u, hy + py * u);
+    ctx.fill();
+    ctx.fillStyle = '#e63946'; ctx.beginPath(); ctx.arc(hx, hy - u * .21, u * .035, 0, 7); ctx.fill();
+    ctx.fillStyle = '#4ea8de'; ctx.beginPath(); ctx.arc(hx - u * .12, hy - u * .2, u * .028, 0, 7); ctx.arc(hx + u * .12, hy - u * .2, u * .028, 0, 7); ctx.fill();
+  } else if (id === 'zauber') {
+    ctx.fillStyle = '#7b2cbf';
+    ctx.beginPath(); ctx.ellipse(hx, hy - u * .15, u * .3, u * .06, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(hx - u * .18, hy - u * .16); ctx.lineTo(hx - d * u * .14, hy - u * .72); ctx.lineTo(hx + u * .18, hy - u * .16); ctx.fill();
+    star(hx - u * .02, hy - u * .36, u * .07, 1); star(hx + u * .07, hy - u * .23, u * .05, 1);
+  } else if (id === 'pirat') {
+    ctx.fillStyle = '#1b1b1b'; ctx.beginPath(); ctx.moveTo(hx - u * .34, hy - u * .12);
+    ctx.quadraticCurveTo(hx, hy - u * .62, hx + u * .34, hy - u * .12); ctx.quadraticCurveTo(hx, hy - u * .24, hx - u * .34, hy - u * .12); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(hx, hy - u * .28, u * .05, 0, 7); ctx.fill();
+  } else if (id === 'blumen') {
+    ['#ff6b6b', '#ffbe0b', '#b388eb', '#4ea8de', '#ff8fab', '#57cc99'].forEach((c, i) => {
+      const a = Math.PI + i * Math.PI / 5;
+      ctx.fillStyle = c; ctx.beginPath(); ctx.arc(hx + Math.cos(a) * u * .21, hy - u * .04 + Math.sin(a) * u * .2, u * .065, 0, 7); ctx.fill();
+    });
+  } else if (id === 'party') {
+    ctx.save(); ctx.beginPath(); ctx.moveTo(hx - u * .16, hy - u * .17); ctx.lineTo(hx, hy - u * .68); ctx.lineTo(hx + u * .16, hy - u * .17); ctx.closePath();
+    ctx.fillStyle = '#ff8fab'; ctx.fill(); ctx.clip();
+    ctx.fillStyle = '#4cc9f0'; for (let i = 0; i < 4; i++) ctx.fillRect(hx - u * .2, hy - u * (.27 + i * .12), u * .4, u * .05);
+    ctx.restore();
+    ctx.fillStyle = '#ffd60a'; ctx.beginPath(); ctx.arc(hx, hy - u * .69, u * .065, 0, 7); ctx.fill();
+  } else {                            // Mütze mit Schirm in Blickrichtung
+    ctx.fillStyle = '#ffbe0b';
+    ctx.beginPath(); ctx.arc(hx, hy - u * 0.08, u * 0.22, Math.PI, 0); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(hx + d * u * 0.2, hy - u * 0.09, u * 0.14, u * 0.035, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#e63946'; ctx.beginPath(); ctx.arc(hx, hy - u * 0.3, u * 0.045, 0, 7); ctx.fill();
+  }
+}
+
+function drawDog() {
+  if (!on('hund')) return;
+  const u = S, step = dog.moving ? Math.sin(time * 18) * u * .07 : 0;
+  ctx.save(); ctx.translate(dog.x, RAIL); ctx.scale(dog.dir || -1, 1);
+  ctx.strokeStyle = '#8d5524'; ctx.lineWidth = u * .07; ctx.lineCap = 'round';
+  for (const lx of [-.15, .15]) { ctx.beginPath(); ctx.moveTo(lx * u, -u * .2); ctx.lineTo(lx * u + (lx > 0 ? step : -step), 0); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(-u * .22, -u * .3); ctx.lineTo(-u * .36, -u * .44 + Math.sin(time * 16) * u * .07); ctx.stroke();   // Schwanz wedelt
+  ctx.fillStyle = '#c68642';
+  ctx.beginPath(); ctx.ellipse(0, -u * .28, u * .25, u * .13, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(u * .26, -u * .42, u * .14, 0, 7); ctx.fill();
+  ctx.fillStyle = '#8d5524'; ctx.beginPath(); ctx.ellipse(u * .19, -u * .42, u * .05, u * .11, .4, 0, 7); ctx.fill();
+  ctx.fillStyle = '#3b2f2f'; ctx.beginPath(); ctx.arc(u * .31, -u * .46, u * .022, 0, 7); ctx.arc(u * .39, -u * .4, u * .032, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+function drawBird() {
+  if (!on('vogel')) return;
+  const u = S, x = man.x + Math.sin(time * 1.6) * u * .9, y = man.y - u * 1.6 + Math.sin(time * 3.2) * u * .2;
+  const flap = Math.sin(time * 25);
+  ctx.save(); ctx.translate(x, y); ctx.scale(Math.cos(time * 1.6) >= 0 ? 1 : -1, 1);
+  ctx.fillStyle = '#4cc9f0';
+  ctx.beginPath(); ctx.ellipse(0, 0, u * .13, u * .1, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(u * .11, -u * .06, u * .075, 0, 7); ctx.fill();
+  ctx.fillStyle = '#ffbe0b'; ctx.beginPath(); ctx.moveTo(u * .17, -u * .08); ctx.lineTo(u * .26, -u * .05); ctx.lineTo(u * .17, -u * .02); ctx.fill();
+  ctx.fillStyle = '#3b2f2f'; ctx.beginPath(); ctx.arc(u * .13, -u * .08, u * .016, 0, 7); ctx.fill();
+  ctx.fillStyle = '#3a86ff'; ctx.beginPath(); ctx.moveTo(-u * .04, -u * .02); ctx.lineTo(-u * .12, -u * .02 - flap * u * .15); ctx.lineTo(u * .06, -u * .02); ctx.fill();
+  ctx.restore();
+}
+
+function drawGift() {
+  const t = gift.t, bx = HOME - 2.2 * S, w = S * .9;
+  const by = t < .6 ? lerp(-S, RAIL, (t / .6) ** 2) : RAIL - (t < .8 ? Math.sin((t - .6) / .2 * Math.PI) * S * .15 : 0);
+  ctx.save(); ctx.translate(bx, by); ctx.rotate(t > .8 && t < 1.3 ? Math.sin(t * 40) * .12 : 0);
+  ctx.fillStyle = '#ff6b6b'; ctx.fillRect(-w / 2, -w * .8, w, w * .8);
+  ctx.fillStyle = '#ffd60a'; ctx.fillRect(-w * .08, -w * .8, w * .16, w * .8);
+  ctx.save(); ctx.translate(0, -w * .8 - (gift.opened ? (t - 1.3) * S * 5 : 0)); ctx.rotate(gift.opened ? (t - 1.3) * 4 : 0);
+  ctx.fillStyle = '#e63946'; ctx.fillRect(-w * .55, -w * .2, w * 1.1, w * .2);
+  ctx.fillStyle = '#ffd60a'; ctx.fillRect(-w * .08, -w * .2, w * .16, w * .2);
+  ctx.beginPath(); ctx.ellipse(-w * .15, -w * .28, w * .15, w * .09, -.4, 0, 7); ctx.ellipse(w * .15, -w * .28, w * .15, w * .09, .4, 0, 7); ctx.fill();
+  ctx.restore(); ctx.restore();
+  if (gift.opened) {                  // Geschenk steigt aus der Kiste und wird groß
+    const k = ease(Math.min((t - 1.3) / .8, 1)), ix = lerp(bx, FX + COLS * S / 2, k), iy = lerp(by - w, FY + ROWS * S * .35, k), size = S * (.8 + 2.2 * k);
+    ctx.fillStyle = 'rgba(255,230,120,.55)'; ctx.beginPath(); ctx.arc(ix, iy, size * (.8 + Math.sin(time * 6) * .05), 0, 7); ctx.fill();
+    ctx.font = `${size}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(gift.g.icon, ix, iy);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  }
+}
+
+function drawParts() {
+  for (const p of parts) {
+    ctx.globalAlpha = Math.min(1, p.life);
+    if (p.txt) {
+      ctx.font = `bold ${Math.round(S * .6)}px "Trebuchet MS", sans-serif`; ctx.textAlign = 'center';
+      ctx.lineWidth = 4; ctx.strokeStyle = '#fff'; ctx.strokeText(p.txt, p.x, p.y);
+      ctx.fillStyle = '#ff9f1c'; ctx.fillText(p.txt, p.x, p.y); ctx.textAlign = 'left';
+    } else {
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.c;
+      ctx.fillRect(-S * .08, -S * .04, S * .16, S * .08); ctx.restore();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
 function pieceCenterX() {
   const c = cells(piece.m);
   return FX + (piece.x + c.reduce((s, [x]) => s + x, 0) / c.length + 0.5) * S;
@@ -414,7 +625,11 @@ function draw() {
     cell(FX + x * S, FY + y * S + sink, flash ? '#ffffff' : c, wipe ? Math.max(0, 1 - wipe.t) : 1);
   }
   if (piece) drawPiece();
+  if (gift) drawGift();
+  drawDog();
   drawMan();
+  drawBird();
+  drawParts();
 }
 
 // ---------- Größe ----------
@@ -433,33 +648,116 @@ function resize() {
 // ---------- Ton ----------
 // iPad: Web Audio startet nur nach Berührung (resume) und schweigt bei Stummschaltung,
 // außer die Audio-Session steht auf "playback" (Safari 16.4+).
-let ac, noiseBuf, musicOn = true, nextNote = 0;
+let ac, noiseBuf, master, musicBus, leadBus, sfxBus, reverb, echo, musicOn = true, nextNote = 0;
 function unlock() {
   try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
-  if (!ac) {
-    ac = new (window.AudioContext || window.webkitAudioContext)();
-    noiseBuf = ac.createBuffer(1, ac.sampleRate * 0.5, ac.sampleRate);
-    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  }
+  if (!ac) initAudio();
   if (ac.state !== 'running' && !paused) ac.resume();
 }
 for (const ev of ['pointerdown', 'touchend', 'click', 'keydown']) addEventListener(ev, unlock, { capture: true });
+
+// Mischpult: Musik (Melodie mit Echo) + Effekte → Hall → Kompressor → Lautsprecher
+function initAudio() {
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+  const nd = noiseBuf.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  const comp = ac.createDynamicsCompressor(); comp.threshold.value = -16; comp.ratio.value = 4;
+  master = ac.createGain(); master.connect(comp).connect(ac.destination);
+  reverb = ac.createConvolver();                       // Hall: künstlicher Raum aus abklingendem Rauschen
+  const len = ac.sampleRate * 2.4, ir = ac.createBuffer(2, len, ac.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.5); }
+  reverb.buffer = ir;
+  echo = ac.createDelay(2);                            // Echo mit gedämpfter Rückkopplung
+  const fb = ac.createGain(), damp = ac.createBiquadFilter();
+  fb.gain.value = .35; damp.type = 'lowpass'; damp.frequency.value = 2200;
+  echo.connect(damp).connect(fb).connect(echo);
+  const bus = (to, gain) => { const g = ac.createGain(); g.gain.value = gain; g.connect(to); return g; };
+  reverb.connect(bus(master, .5));
+  damp.connect(bus(master, .3));
+  musicBus = bus(master, musicOn ? .6 : 0); musicBus.connect(bus(reverb, .45));
+  leadBus = bus(musicBus, 1); leadBus.connect(bus(echo, .35));
+  sfxBus = bus(master, 1); sfxBus.connect(bus(reverb, .15));
+}
 
 function tone(f, d, { type = 'triangle', vol = 0.15, at = 0, to = 0 } = {}) {
   const t = ac.currentTime + at, o = ac.createOscillator(), g = ac.createGain();
   o.type = type; o.frequency.setValueAtTime(f, t);
   if (to) o.frequency.exponentialRampToValueAtTime(to, t + d);
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
-  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + d + 0.02);
+  o.connect(g).connect(sfxBus); o.start(t); o.stop(t + d + 0.02);
 }
 function noise(d, { vol = 0.3, freq = 800, at = 0 } = {}) {
   const t = ac.currentTime + at, s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
   s.buffer = noiseBuf; f.type = 'lowpass'; f.frequency.value = freq;
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
-  s.connect(f).connect(g).connect(ac.destination); s.start(t); s.stop(t + d);
+  s.connect(f).connect(g).connect(sfxBus); s.start(t); s.stop(t + d);
 }
+
+// ---------- Instrumente ----------
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+function env(g, t, a, peak, d) {
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + a + d);
+}
+function osc(type, f, t, d, dest, peak, a = .004) {
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.value = f; env(g, t, a, peak, d);
+  o.connect(g).connect(dest); o.start(t); o.stop(t + a + d + .05); return o;
+}
+const ksCache = {};
+function ksBuf(m) {                                    // Karplus-Strong: physikalisch gezupfte Saite
+  if (ksCache[m]) return ksCache[m];
+  const sr = ac.sampleRate, n = Math.round(sr / mtof(m)), len = Math.round(sr * 1.8), b = ac.createBuffer(1, len, sr), d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  for (let i = n; i < len; i++) d[i] = (d[i - n] + d[i - n + 1]) * .4985;
+  return ksCache[m] = b;
+}
+const INST = {
+  pluck(m, t, v, dest) {
+    const s = ac.createBufferSource(), g = ac.createGain(), n = Math.round(ac.sampleRate / mtof(m));
+    s.buffer = ksBuf(m); s.playbackRate.value = mtof(m) * (n + .5) / ac.sampleRate;   // Stimmung exakt korrigieren
+    g.gain.value = v * 1.3; s.connect(g).connect(dest); s.start(t); s.stop(t + 1.8);
+  },
+  mallet(m, t, v, dest) {                              // Marimba: Grundton + Holz-Obertöne
+    const f = mtof(m); osc('sine', f, t, .8, dest, v); osc('sine', f * 4, t, .1, dest, v * .3); osc('sine', f * 9.2, t, .03, dest, v * .1);
+  },
+  bell(m, t, v, dest) {                                // Glockenspiel: unharmonische Obertöne
+    const f = mtof(m + 12); osc('sine', f, t, 1.5, dest, v * .7); osc('sine', f * 2.76, t, .6, dest, v * .22); osc('sine', f * 5.4, t, .2, dest, v * .1);
+  },
+  flute(m, t, v, dest, d = .4) {                       // Flöte: weicher Einsatz, Vibrato, Atemhauch
+    const f = mtof(m), o = ac.createOscillator(), g = ac.createGain(), l = ac.createOscillator(), lg = ac.createGain();
+    o.type = 'triangle'; o.frequency.value = f; l.frequency.value = 5.5; lg.gain.value = f * .007;
+    l.connect(lg).connect(o.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(v * .8, t + .06);
+    g.gain.setValueAtTime(v * .8, t + d); g.gain.exponentialRampToValueAtTime(0.0001, t + d + .2);
+    o.connect(g).connect(dest); o.start(t); l.start(t); o.stop(t + d + .25); l.stop(t + d + .25);
+    hit(t, v * .25, 'bandpass', f * 2, .08, dest);
+  },
+};
+function pad(ms, t, d, v) {                            // weiche Akkordfläche: verstimmte Sägezähne, gefiltert
+  const f = ac.createBiquadFilter(), g = ac.createGain();
+  f.type = 'lowpass'; f.frequency.value = 1100;
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(v, t + .35);
+  g.gain.setValueAtTime(v, t + d - .1); g.gain.exponentialRampToValueAtTime(0.0001, t + d + .6);
+  f.connect(g).connect(musicBus);
+  for (const m of ms) for (const det of [-9, 9]) {
+    const o = ac.createOscillator(); o.type = 'sawtooth'; o.frequency.value = mtof(m); o.detune.value = det;
+    o.connect(f); o.start(t); o.stop(t + d + .7);
+  }
+}
+function bass(m, t, d, v) { osc('triangle', mtof(m), t, d, musicBus, v); osc('sine', mtof(m), t, d * 1.2, musicBus, v * .8); }
+function kick(t, v) {
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(45, t + .15);
+  env(g, t, .002, v, .25); o.connect(g).connect(musicBus); o.start(t); o.stop(t + .3);
+}
+function hit(t, v, type, freq, d, dest = musicBus) {   // Rauschen gefiltert: Klatschen, Shaker, Atem
+  const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+  s.buffer = noiseBuf; f.type = type; f.frequency.value = freq; env(g, t, .002, v, d);
+  s.connect(f).connect(g).connect(dest); s.start(t, Math.random() * .5); s.stop(t + d + .05);
+}
+
 const SFX = {
-  pop:     () => tone(400, .1, { vol: .1, to: 750 }),
+  pop:     () => INST.pluck(79, ac.currentTime, .12, sfxBus),
   move:    () => tone(620, .06, { vol: .08 }),
   step:    () => tone(170 + Math.random() * 50, .05, { type: 'sine', vol: .12 }),
   zipDown: () => tone(1000, .35, { type: 'sine', vol: .07, to: 300 }),
@@ -467,47 +765,100 @@ const SFX = {
   hau:     () => tone(260, .18, { type: 'square', vol: .06, to: 200 }),
   ruck:    () => { tone(330, .14, { type: 'square', vol: .06, to: 250 }); tone(90, .55, { type: 'sawtooth', vol: .07, to: 160, at: .05 }); noise(.5, { vol: .08, freq: 600, at: .05 }); },
   strain:  () => tone(200, .45, { type: 'sawtooth', vol: .06, to: 160 }),
-  pling:   () => { tone(880, .14, { vol: .12 }); tone(1320, .25, { vol: .1, at: .09 }); },
+  pling:   () => INST.bell(84, ac.currentTime, .22, sfxBus),
   bonk:    () => tone(160, .25, { type: 'square', vol: .1, to: 80 }),
   whoosh:  () => noise(.3, { vol: .2, freq: 2500 }),
   land:    () => { noise(.18, { vol: .5, freq: 350 }); tone(120, .18, { type: 'sine', vol: .25, to: 55 }); },
-  line:    () => [523, 659, 784, 1047].forEach((f, i) => tone(f, .18, { vol: .12, at: i * .09 })),
+  line:    () => [72, 76, 79, 84].forEach((m, i) => INST.mallet(m, ac.currentTime + i * .08, .25, sfxBus)),
   juhu:    () => tone(500, .35, { vol: .1, to: 1100, at: .4 }),
-  full:    () => [392, 330, 262].forEach((f, i) => tone(f, .3, { vol: .12, at: i * .2 })),
+  full:    () => [67, 64, 60].forEach((m, i) => INST.mallet(m, ac.currentTime + i * .2, .25, sfxBus)),
+  wuff:    () => { tone(320, .09, { type: 'sawtooth', vol: .08, to: 180, at: .5 }); tone(300, .1, { type: 'sawtooth', vol: .08, to: 160, at: .68 }); },
+  piep:    () => { tone(2200, .06, { type: 'sine', vol: .06, to: 2900, at: .3 }); tone(2400, .06, { type: 'sine', vol: .06, to: 3100, at: .42 }); },
+  fanfare: () => {
+    const t = ac.currentTime;
+    [67, 72, 76, 79].forEach((m, i) => INST.mallet(m, t + i * .1, .25, sfxBus));
+    [72, 76, 79, 84].forEach(m => INST.pluck(m, t + .45, .12, sfxBus));
+    INST.bell(84, t + .45, .25, sfxBus);
+  },
 };
 function sound(k) { if (ac && ac.state === 'running') SFX[k](); }
 
-// Hintergrundmusik: jedes Lied wird neu erfunden (Tonart, Tempo, Klang, Melodie),
-// Form A A' B A auf der Pentatonik – klingt immer freundlich, wiederholt sich nie gleich.
-const PENTA = [0, 2, 4, 7, 9], rnd = n => Math.floor(Math.random() * n);
-const deg2f = (root, d) => root * Math.pow(2, (Math.floor(d / 5) * 12 + PENTA[((d % 5) + 5) % 5]) / 12);
+// ---------- Musik ----------
+// Jedes Lied wird neu erfunden: Stil (Instrumente), Tonart, Tempo, Swing, Akkordfolge, Melodie-Motive.
+// Aufbau: Intro – A – B – A – Schluss. Betonte Melodietöne liegen auf Akkordtönen, darum klingt es stimmig.
+const MAJ = [0, 2, 4, 5, 7, 9, 11], rnd = n => Math.floor(Math.random() * n), pick = a => a[rnd(a.length)];
+const PROGS = [[0, 4, 5, 3], [0, 3, 4, 3], [5, 3, 0, 4], [0, 5, 3, 4], [3, 0, 4, 5], [0, 3, 0, 4], [0, 2, 3, 4]];
+const RHYTHMS = [[1,0,1,0,1,0,1,1], [1,0,0,1,0,0,1,0], [1,1,1,0,1,0,0,0], [1,0,1,1,1,0,1,0], [1,0,0,0,1,0,1,1], [0,0,1,0,1,1,1,0], [1,0,1,0,1,0,0,0]];
+const STYLES = [
+  { lead: 'mallet', arp: 'pluck',  pad: false, drums: 'soft', arpEvery: 1 },   // Kalimba-Groove
+  { lead: 'pluck',  arp: 'pluck',  pad: true,  drums: 'soft', arpEvery: 2 },   // Gitarre
+  { lead: 'bell',   arp: 'mallet', pad: true,  drums: 'none', arpEvery: 2 },   // Spieluhr
+  { lead: 'flute',  arp: 'pluck',  pad: true,  drums: 'full', arpEvery: 1 },   // Flöte mit Band
+  { lead: 'mallet', arp: 'pluck',  pad: true,  drums: 'full', arpEvery: 2 },   // Marimba-Band
+];
+const deg2m = (root, d) => root + 12 * Math.floor(d / 7) + MAJ[((d % 7) + 7) % 7];
 let song = null;
-function phrase(start) {
-  let d = start; const out = [];
-  for (let i = 0; i < 8; i++) {
-    d = Math.max(0, Math.min(9, d + [-2, -1, -1, 0, 1, 1, 2][rnd(7)]));
-    out.push(i % 4 === 3 && Math.random() < 0.4 ? null : d);
-  }
-  out[7] = Math.random() < 0.5 ? 5 : 0;          // Phrase endet auf dem Grundton
-  return out;
+function makeSong() {
+  const prog = pick(PROGS), motif = () => ({ r: pick(RHYTHMS), c: Array.from({ length: 8 }, () => pick([-2, -1, -1, 1, 1, 2, 0])) });
+  const A = motif(), B = motif(), bars = [];
+  for (const [part, m] of [['intro', null], ['A', A], ['B', B], ['A', A]])
+    for (let i = 0; i < 4; i++) bars.push({ part, chord: prog[i], m, first: i === 0, last: i === 3 });
+  bars.push({ part: 'end', chord: 0 }, { part: 'rest', chord: 0 });
+  return { style: pick(STYLES), root: 55 + rnd(8), eighth: 30 / (86 + rnd(30)), swing: Math.random() < .5 ? .14 : 0, bars, bar: 0, step: 0, mel: 4 };
 }
-function newSong() {
-  const A = phrase(5), B = phrase(7), A2 = A.slice(0, 6).concat(phrase(4).slice(6));
-  song = {
-    root: [262, 294, 330, 349, 392][rnd(5)], beat: 0.24 + Math.random() * 0.12,
-    wave: ['sine', 'triangle'][rnd(2)], bass: [[0, 0, 3, 4], [0, 3, 0, 4], [0, 2, 3, 4], [0, 4, 2, 3]][rnd(4)],
-    notes: [...A, ...A2, ...B, ...A, null, null, null, null], i: 0,
-  };
+function nearestChordTone(d, chord) {
+  const cands = chord.flatMap(c => [-2, -1, 0, 1, 2].map(o => c + 7 * o));
+  return cands.reduce((b, n) => Math.abs(n - d) < Math.abs(b - d) ? n : b);
+}
+function drums(kind, part, i, t) {
+  if (kind === 'none') return;
+  if (part === 'intro') { if (i % 2) hit(t, .02, 'highpass', 7000, .04); return; }
+  if (i === 0 || (kind === 'full' && i === 4) || (i === 5 && Math.random() < .25)) kick(t, kind === 'full' ? .5 : .35);
+  if (i === 2 || i === 6) kind === 'full' ? hit(t, .18, 'bandpass', 1400, .12) : hit(t, .06, 'bandpass', 3000, .05);
+  hit(t, i % 2 ? .035 : .02, 'highpass', 7000, .04);   // Shaker
+}
+function playStep(s, t) {
+  const b = s.bars[s.bar], i = s.step, st = s.style, R = s.root, len = s.eighth;
+  const chord = [b.chord, b.chord + 2, b.chord + 4];
+  if (b.part === 'end') {
+    if (i === 0) {
+      INST[st.lead](deg2m(R + 12, 0), t, .14, leadBus, len * 6);
+      if (st.pad) pad(chord.map(d => deg2m(R, d)), t, len * 6, .02);
+      bass(deg2m(R - 12, 0), t, len * 6, .16);
+      if (st.drums !== 'none') kick(t, .3);
+    }
+  } else if (b.part !== 'rest') {
+    const intro = b.part === 'intro';
+    if (i === 0) {
+      if (st.pad) pad(chord.map(d => deg2m(R, d)), t, len * 8, .018);
+      if (!intro || s.bar >= 2) bass(deg2m(R - 12, b.chord), t, len * 3, .16);
+      if (b.first) s.mel = 4;                          // jeder Teil beginnt gleich → A wiedererkennbar
+    }
+    if (i === 4 && !intro) bass(deg2m(R - 12, b.chord + pick([0, 4, 7])), t, len * 2, .12);
+    if (i % st.arpEvery === 0) {
+      const k = [0, 1, 2, 3, 2, 1, 2, 3][i];
+      INST[st.arp](deg2m(R, k < 3 ? chord[k] : b.chord + 7), t, intro ? .06 : .045, musicBus, len);
+    }
+    if (!intro && b.m.r[i]) {
+      let d = s.mel + b.m.c[i] + (b.last && i > 3 ? pick([-1, 0, 1]) : 0);
+      if (i % 4 === 0) d = nearestChordTone(d, chord);
+      if (d > 11) d -= 3;
+      if (d < 0) d += 3;
+      s.mel = d;
+      INST[st.lead](deg2m(R + 12, d), t, b.part === 'B' ? .12 : .14, leadBus, len * 1.6);
+    }
+    drums(st.drums, b.part, i, t);
+  }
+  if (++s.step === 8) { s.step = 0; s.bar++; }
 }
 function music() {
   if (!ac || !musicOn || ac.state !== 'running') return;
-  if (nextNote < ac.currentTime) nextNote = ac.currentTime + 0.05;
-  while (nextNote < ac.currentTime + 0.25) {
-    if (!song || song.i >= song.notes.length) newSong();
-    const i = song.i++, d = song.notes[i], at = nextNote - ac.currentTime;
-    if (d !== null) tone(deg2f(song.root, d), song.beat * 1.1, { type: song.wave, vol: .035, at });
-    if (i % 4 === 0 && i < 32) tone(deg2f(song.root / 2, song.bass[(i >> 3) % 4]), song.beat * 2, { type: 'sine', vol: .045, at });
-    nextNote += song.beat;
+  if (nextNote < ac.currentTime) nextNote = ac.currentTime + .05;
+  while (nextNote < ac.currentTime + .3) {
+    if (!song || song.bar >= song.bars.length) { song = makeSong(); echo.delayTime.value = song.eighth * 3; }
+    const swing = song.step % 2 ? -song.swing : song.swing;
+    playStep(song, nextNote);
+    nextNote += song.eighth * (1 + swing);
   }
 }
 
@@ -533,21 +884,40 @@ const speedInput = document.getElementById('speed');
 const setSpeed = () => fallMs = Math.round(3000 * Math.pow(0.81, speedInput.value - 1));
 speedInput.addEventListener('input', setSpeed); setSpeed();
 
-function togglePause() {
-  paused = !paused;
-  document.getElementById('pause').textContent = paused ? '▶' : '⏸';
-  document.getElementById('pauseBox').classList.toggle('on', paused);
-  if (ac) paused ? ac.suspend() : ac.resume();
+function setPaused(p, box = 'pauseBox') {
+  paused = p;
+  document.getElementById('pause').textContent = p ? '▶' : '⏸';
+  for (const id of ['pauseBox', 'chest']) document.getElementById(id).classList.toggle('on', p && id === box);
+  if (p && box === 'chest') renderChest();
+  if (ac) p ? ac.suspend() : ac.resume();
 }
+const togglePause = () => setPaused(!paused);
 document.getElementById('pause').addEventListener('click', togglePause);
 document.getElementById('pauseBox').addEventListener('click', togglePause);
-document.addEventListener('visibilitychange', () => { if (document.hidden && !paused) togglePause(); });
+document.getElementById('chest').addEventListener('click', togglePause);
+document.getElementById('chestBtn').addEventListener('click', () => setPaused(true, 'chest'));
+document.addEventListener('visibilitychange', () => { if (document.hidden && !paused) setPaused(true); });
 document.getElementById('music').addEventListener('click', e => {
   musicOn = !musicOn; e.currentTarget.textContent = musicOn ? '🎵' : '🔇';
+  if (musicBus) musicBus.gain.setTargetAtTime(musicOn ? .6 : 0, ac.currentTime, .05);
+});
+
+function renderChest() {
+  document.getElementById('tiles').innerHTML = GIFTS.map(g => !have(g.id)
+    ? `<button disabled>🔒<small>ab ⭐ ${g.at}</small></button>`
+    : `<button data-id="${g.id}" class="${(g.kind === 'hat' ? save.hat === g.id : on(g.id)) ? 'on' : ''}">${g.icon}<small>${g.short}</small></button>`).join('');
+}
+document.getElementById('tiles').addEventListener('click', e => {
+  e.stopPropagation();
+  const b = e.target.closest('button'), g = b && GIFTS.find(x => x.id === b.dataset.id);
+  if (!g) return;
+  if (g.kind === 'hat') save.hat = save.hat === g.id ? '' : g.id;      // nochmal tippen = wieder Mütze
+  else save.off[g.id] = !save.off[g.id];                               // Tiere/Regenbogen an/aus
+  store(); renderChest();
 });
 
 addEventListener('resize', resize);
-resize(); board = emptyBoard(); spawn();
+resize(); board = emptyBoard(); hud(); spawn();
 let last = performance.now();
 (function loop(now) {
   if (!paused) update(Math.min((now - last) / 1000, 0.1));
