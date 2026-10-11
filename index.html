@@ -158,7 +158,9 @@ function lock() {
 // ---------- Kalle ----------
 // Kalle packt den Stein an der linken Kante und stemmt ihn im Uhrzeigersinn herum.
 // Der Griffpunkt dreht sich mit dem Stein, Kalles Hände bleiben daran kleben.
-function pivot() { const n = piece.m.length; return [FX + (piece.x + n / 2) * S, FY + (piece.y + n / 2) * S]; }
+// Stein-Höhe inkl. angefangener Fallstrecke (bleibt stehen, solange Kalle dreht, statt zurückzuspringen)
+const fallY = () => piece.y + (fits(piece.m, piece.x, piece.y + 1) ? acc / (dropping ? DROP_MS : fallMs) : 0);
+function pivot() { const n = piece.m.length; return [FX + (piece.x + n / 2) * S, FY + (fallY() + n / 2) * S]; }
 function gripAt(a) {
   const c = cells(piece.m), n = piece.m.length, minX = Math.min(...c.map(p => p[0]));
   const ys = c.filter(p => p[0] === minX).map(p => p[1]).sort((p, q) => p - q);
@@ -385,8 +387,7 @@ function star(x, y, r, alpha) {
 
 function drawPiece() {
   const n = piece.m.length;
-  let py = piece.y;
-  if (!busy() && fits(piece.m, piece.x, piece.y + 1)) py += acc / (dropping ? DROP_MS : fallMs);
+  const py = fallY();
   // Schatten: wo der Stein landet
   if (!dropping) {
     let gy = piece.y; while (fits(piece.m, piece.x, gy + 1)) gy++;
