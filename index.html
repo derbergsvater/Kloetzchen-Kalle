@@ -88,8 +88,8 @@ const SHAPES = [
   { c:'#57cc99', m:[[0,1,1],[1,1,0],[0,0,0]] },
 ];
 // Kalle-Tempo: Zellen pro Sekunde; Drehung = Schwung holen + Stemmen + Loslassen (Sekunden)
-const WALK = 11, CLIMB = 12, DROP_MS = 35;
-const T_WIND = 0.18, T_PUSH = 0.38, T_REL = 0.22, TURN = T_WIND + T_PUSH + T_REL;
+const WALK = 11, CLIMB = 18, DROP_MS = 35;
+const T_WIND = 0.12, T_PUSH = 0.26, T_REL = 0.12, TURN = T_WIND + T_PUSH + T_REL;
 // Kalles Füße relativ zum Griffpunkt (in Zellen): neben dem Stein → oben drauf
 const OFF0 = [-0.42, 0.55], OFF1 = [-0.4, 0.1];
 
@@ -119,7 +119,7 @@ let gift = null, giftQueue = [], parts = [];
 const dog = { x: 0, dir: -1, moving: false };
 let fallMs = 2400, paused = false;
 const man = { x:0, y:0, ax:0, dir:-1, state:'home', t:0, queue:0, ok:false, kick:0, cheer:0,
-              walkT:0, ph:0, moving:false, lean:0, fired:{}, say:'', sayT:0, blink:0 };
+              walkT:0, ph:0, moving:false, lean:0, fired:{}, say:'', sayT:0, blink:0, bump:0 };
 
 const rotate = m => m.map((r, y) => r.map((_, x) => m[m.length - 1 - x][y]));
 const cells = m => m.flatMap((r, y) => r.flatMap((v, x) => v ? [[x, y]] : []));
@@ -177,6 +177,7 @@ const talk = (s, d = 0.8) => { man.say = s; man.sayT = d; };
 function wantTurn() {
   if (!piece || dropping || clearing || wipe) return;
   man.queue = Math.min(man.queue + 1, 3);
+  man.bump = 0.25; sound('noch');
   if (!busy()) man.state = 'walk';
 }
 
@@ -207,6 +208,7 @@ function moveTo(tx, ty, speed, dt) {
 function updateMan(dt) {
   man.cheer = Math.max(0, man.cheer - dt);
   man.sayT = Math.max(0, man.sayT - dt);
+  man.bump = Math.max(0, man.bump - dt);
   man.blink = man.blink > 0 ? man.blink - dt : (Math.random() < dt * 0.4 ? 0.13 : 0);
   if (!['walk', 'gohome', 'follow'].includes(man.state)) man.moving = false;
   if (man.state !== 'turn') man.lean *= 0.85;
@@ -334,8 +336,12 @@ function updateDog(dt) {
 }
 
 function move(dx) {
-  if (!piece || busy() || dropping || clearing || wipe) return;
-  if (fits(piece.m, piece.x + dx, piece.y)) { piece.x += dx; sound('move'); }
+  if (!piece || dropping || clearing || wipe) return;
+  if (!fits(piece.m, piece.x + dx, piece.y)) return;
+  // während Kalle dreht: die gedrehte Form muss am neuen Platz auch passen
+  if (man.state === 'turn' && man.ok && !fits(rotate(piece.m), piece.x + dx + man.kick, piece.y)) return;
+  piece.x += dx; sound('move');
+  if (['down', 'turn', 'up'].includes(man.state)) man.ax += dx * S;   // Seil wandert mit
 }
 function drop() {
   if (!piece || busy() || clearing || wipe) return;
@@ -494,6 +500,17 @@ function drawMan() {
   }
   drawHat(save.hat, hx, hy, u);
   ctx.restore();
+  // Zähler: so oft dreht Kalle noch
+  const todo = man.queue - (st === 'turn' && man.ok && t >= T_WIND + T_PUSH ? 1 : 0);
+  if (todo > 0 && ['walk', 'down', 'turn'].includes(st)) {
+    const r = u * (0.38 + man.bump * 0.6), bx = Math.max(r + 2, x - u * 0.75), by = f - u * 1.55;
+    ctx.fillStyle = '#ff9f1c'; ctx.strokeStyle = '#fff'; ctx.lineWidth = u * 0.06;
+    ctx.beginPath(); ctx.arc(bx, by, r, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.round(r * 1.1)}px "Trebuchet MS", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(todo + '×', bx, by + r * 0.05);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  }
   // Sprechblase
   if (man.sayT > 0) {
     ctx.font = `bold ${Math.round(u * 0.34)}px "Trebuchet MS", sans-serif`;
@@ -777,6 +794,7 @@ function hit(t, v, type, freq, d, dest = musicBus) {   // Rauschen gefiltert: Kl
 const SFX = {
   pop:     () => INST.pluck(79, ac.currentTime, .12, sfxBus),
   move:    () => tone(620, .06, { vol: .08 }),
+  noch:    () => INST.pluck(72 + man.queue * 4, ac.currentTime, .12, sfxBus),   // je Druck einen Ton höher
   step:    () => tone(170 + Math.random() * 50, .05, { type: 'sine', vol: .12 }),
   zipDown: () => tone(1000, .35, { type: 'sine', vol: .07, to: 300 }),
   zipUp:   () => tone(300, .35, { type: 'sine', vol: .07, to: 1000 }),
