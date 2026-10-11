@@ -67,7 +67,7 @@
   Tippen oder <kbd>P</kbd> zum Weiterspielen
   <table>
     <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Stein schieben</td></tr>
-    <tr><td><kbd>↑</kbd></td><td>Kalle dreht den Stein</td></tr>
+    <tr><td><kbd>↑</kbd></td><td>Kalle dreht den Stein (beim Fallen: anhalten)</td></tr>
     <tr><td><kbd>↓</kbd> / <kbd>Leertaste</kbd></td><td>Stein fallen lassen</td></tr>
     <tr><td><kbd>P</kbd></td><td>Pause</td></tr>
   </table>
@@ -177,7 +177,9 @@ function turnAngle() {
 const talk = (s, d = 0.8) => { man.say = s; man.sayT = d; };
 
 function wantTurn() {
-  if (!piece || dropping || clearing || wipe) return;
+  if (!piece || clearing || wipe) return;
+  // beim Fallenlassen: ↑ bremst nur (kein Drehen), angefangene Strecke bleibt erhalten
+  if (dropping) { acc = acc / DROP_MS * fallMs; dropping = false; sound('move'); return; }
   man.queue = Math.min(man.queue + 1, 3);
   man.bump = 0.25; sound('noch');
   if (!busy()) man.state = 'walk';
@@ -338,7 +340,7 @@ function updateDog(dt) {
 }
 
 function move(dx) {
-  if (!piece || dropping || clearing || wipe) return;
+  if (!piece || clearing || wipe) return;
   if (!fits(piece.m, piece.x + dx, piece.y)) return;
   // während Kalle dreht: die gedrehte Form muss am neuen Platz auch passen
   if (man.state === 'turn' && man.ok && !fits(rotate(piece.m), piece.x + dx + man.kick, piece.y)) return;
