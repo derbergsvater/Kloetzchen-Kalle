@@ -57,9 +57,9 @@
 <main><canvas id="c"></canvas></main>
 <footer>
   <button id="left" aria-label="nach links">◀<small>←</small></button>
-  <button id="turn" aria-label="drehen">↻<small>↑ ↓</small></button>
+  <button id="turn" aria-label="drehen">↻<small>↑</small></button>
   <button id="right" aria-label="nach rechts">▶<small>→</small></button>
-  <button id="drop" aria-label="fallen lassen">⬇<small>Leertaste</small></button>
+  <button id="drop" aria-label="fallen lassen">⬇<small>↓</small></button>
 </footer>
 <div id="msg"></div>
 <div id="pauseBox" class="overlay"><div>
@@ -67,8 +67,8 @@
   Tippen oder <kbd>P</kbd> zum Weiterspielen
   <table>
     <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Stein schieben</td></tr>
-    <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Kalle dreht den Stein</td></tr>
-    <tr><td><kbd>Leertaste</kbd></td><td>Stein fallen lassen</td></tr>
+    <tr><td><kbd>↑</kbd></td><td>Kalle dreht den Stein</td></tr>
+    <tr><td><kbd>↓</kbd> / <kbd>Leertaste</kbd></td><td>Stein fallen lassen</td></tr>
     <tr><td><kbd>P</kbd></td><td>Pause</td></tr>
   </table>
 </div></div>
@@ -872,7 +872,7 @@ function say(html) {
 const press = (id, fn) => document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); if (!paused) fn(); });
 press('left', () => move(-1)); press('right', () => move(1)); press('turn', wantTurn); press('drop', drop);
 document.addEventListener('keydown', e => {
-  const k = { ArrowLeft: () => move(-1), ArrowRight: () => move(1), ArrowUp: wantTurn, ArrowDown: wantTurn,
+  const k = { ArrowLeft: () => move(-1), ArrowRight: () => move(1), ArrowUp: wantTurn, ArrowDown: drop,
               ' ': drop, p: togglePause, P: togglePause, Escape: togglePause }[e.key];
   if (!k) return;
   e.preventDefault(); document.activeElement.blur();   // sonst schiebt ← → den Tempo-Regler

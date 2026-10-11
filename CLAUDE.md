@@ -8,6 +8,6 @@ Idee + Machbarkeit: `../Ideen/ideen.md` („Kinder-Tetris mit Dreh-Männchen“)
 - Tempo-Stellschrauben oben im Skript: `WALK`, `CLIMB`, Drehphasen `T_WIND`/`T_PUSH`/`T_REL`, Fallzeit über Regler `#speed` (Stufe 1–10 = 3 s … 0,45 s je Reihe).
 - Musik: `makeSong()` erfindet jedes Lied neu (Stil aus `STYLES`, Tonart, Tempo, Swing, Akkordfolge, Motive; Intro–A–B–A–Schluss). Klang selbst synthetisiert: Karplus-Strong-Zupfsaite, Marimba, Glockenspiel, Flöte, Pad, Bass, Drums, Hall + Echo.
 - Anreiz: Sterne (Bonus bei Mehrfach-Reihen) füllen den Balken bis zum nächsten Geschenk (`GIFTS`: Hüte, Hund, Vogel, Regenbogen). Sammlung in `localStorage['kalle']`, Schatzkiste 🧰 zum Auswählen.
-- Tastatur: ← → schieben, ↑ ↓ drehen, Leertaste fallen, P/Esc Pause (Legende im Pause-Fenster und auf den Knöpfen).
+- Tastatur: ← → schieben, ↑ drehen, ↓ (oder Leertaste) fallen, P/Esc Pause (Legende im Pause-Fenster und auf den Knöpfen).
 - Ton: Web Audio, auf dem iPad erst nach Berührung (`unlock`); `navigator.audioSession.type = "playback"` damit es auch bei Stummschaltung klingt.
 - Name/Optik bewusst nicht „Tetris“ (geschützte Marke).
