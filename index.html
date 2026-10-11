@@ -11,16 +11,18 @@
   html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
     font-family:"Trebuchet MS", system-ui, sans-serif; touch-action:manipulation; overflow:hidden; }
   body { display:flex; flex-direction:column; height:100dvh; }
-  header { display:flex; align-items:center; gap:8px; padding:8px 12px; background:var(--bar); }
+  header { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 12px; background:var(--bar); }
+  .tempo { display:flex; align-items:center; gap:4px; font-size:22px; }
+  .tempo input { width:130px; accent-color:#ff9f1c; }
   header h1 { font-size:20px; margin:0 auto 0 0; }
   #stars { font-size:22px; font-weight:bold; min-width:64px; }
   header button { font-size:24px; border:3px solid transparent; border-radius:12px; background:#fff; padding:2px 8px; }
-  .speed.on { border-color:#ff9f1c; background:#ffe8c2; }
   main { flex:1; display:flex; justify-content:center; align-items:center; min-height:0; padding:6px; }
   canvas { display:block; border-radius:14px; }
   footer { display:flex; justify-content:center; gap:14px; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); background:var(--bar); }
-  footer button { font-size:38px; width:84px; height:84px; border:none; border-radius:22px; color:#fff;
-    box-shadow:0 5px 0 rgba(0,0,0,.25); }
+  footer button { font-size:36px; width:84px; height:84px; border:none; border-radius:22px; color:#fff;
+    box-shadow:0 5px 0 rgba(0,0,0,.25); display:flex; flex-direction:column; align-items:center; justify-content:center; line-height:1; }
+  button small { font-size:12px; font-weight:bold; opacity:.85; margin-top:4px; }
   footer button:active { transform:translateY(4px); box-shadow:0 1px 0 rgba(0,0,0,.25); }
   #left, #right { background:#4ea8de; }
   #turn { background:#ff9f1c; }
@@ -28,25 +30,40 @@
   #msg { position:fixed; left:50%; top:40%; transform:translate(-50%,-50%); font-size:34px; font-weight:bold;
     background:#fff; padding:14px 24px; border-radius:20px; box-shadow:0 6px 20px rgba(0,0,0,.2);
     pointer-events:none; opacity:0; transition:opacity .4s; text-align:center; }
+  #pauseBox { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(40,60,80,.45); }
+  #pauseBox.on { display:flex; }
+  #pauseBox div { background:#fff; border-radius:24px; padding:24px 32px; text-align:center; font-size:20px; box-shadow:0 8px 30px rgba(0,0,0,.25); }
+  #pauseBox b { display:block; font-size:40px; margin-bottom:12px; }
+  #pauseBox table { margin:12px auto; text-align:left; border-spacing:12px 6px; }
+  kbd { background:#eee; border:1px solid #ccc; border-bottom-width:3px; border-radius:6px; padding:1px 8px; font-family:inherit; }
 </style>
 </head>
 <body>
 <header>
   <h1>Klötzchen-Kalle</h1>
   <span id="stars">⭐ 0</span>
+  <label class="tempo" title="Tempo">🐌<input id="speed" type="range" min="1" max="10" value="2">🐇</label>
   <button id="music" title="Musik an/aus">🎵</button>
-  <button class="speed on" data-ms="2400" title="ganz langsam">🐌</button>
-  <button class="speed" data-ms="1500" title="langsam">🐢</button>
-  <button class="speed" data-ms="900" title="schneller">🐇</button>
+  <button id="pause" title="Pause (Taste P)">⏸</button>
 </header>
 <main><canvas id="c"></canvas></main>
 <footer>
-  <button id="left" aria-label="nach links">◀</button>
-  <button id="turn" aria-label="drehen">↻</button>
-  <button id="right" aria-label="nach rechts">▶</button>
-  <button id="drop" aria-label="fallen lassen">⬇</button>
+  <button id="left" aria-label="nach links">◀<small>←</small></button>
+  <button id="turn" aria-label="drehen">↻<small>↑ ↓</small></button>
+  <button id="right" aria-label="nach rechts">▶<small>→</small></button>
+  <button id="drop" aria-label="fallen lassen">⬇<small>Leertaste</small></button>
 </footer>
 <div id="msg"></div>
+<div id="pauseBox"><div>
+  <b>⏸ Pause</b>
+  Tippen oder <kbd>P</kbd> zum Weiterspielen
+  <table>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Stein schieben</td></tr>
+    <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Kalle dreht den Stein</td></tr>
+    <tr><td><kbd>Leertaste</kbd></td><td>Stein fallen lassen</td></tr>
+    <tr><td><kbd>P</kbd></td><td>Pause</td></tr>
+  </table>
+</div></div>
 <script>
 const COLS = 8, ROWS = 14;          // ponytail: schmaler als das Original (10), leichter zu füllen
 const SHAPES = [
@@ -57,15 +74,15 @@ const SHAPES = [
   { c:'#57cc99', m:[[0,1,1],[1,1,0],[0,0,0]] },
 ];
 // Kalle-Tempo: Zellen pro Sekunde; Drehung = Schwung holen + Stemmen + Loslassen (Sekunden)
-const WALK = 9, CLIMB = 9, DROP_MS = 35;
-const T_WIND = 0.3, T_PUSH = 0.6, T_REL = 0.35, TURN = T_WIND + T_PUSH + T_REL;
+const WALK = 11, CLIMB = 12, DROP_MS = 35;
+const T_WIND = 0.18, T_PUSH = 0.38, T_REL = 0.22, TURN = T_WIND + T_PUSH + T_REL;
 // Kalles Füße relativ zum Griffpunkt (in Zellen): neben dem Stein → oben drauf
 const OFF0 = [-0.42, 0.55], OFF1 = [-0.4, 0.1];
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let S, FX, FY, RAIL, HOME;          // Zellgröße, Feld-Ursprung, Schiene (Fußhöhe), Kalles Platz
 let board, piece, lastShape = -1, acc = 0, dropping = false, clearing = null, wipe = null, stars = 0, time = 0;
-let fallMs = 2400;
+let fallMs = 2400, paused = false;
 const man = { x:0, y:0, ax:0, dir:-1, state:'home', t:0, queue:0, ok:false, kick:0, cheer:0,
               walkT:0, ph:0, moving:false, lean:0, fired:{}, say:'', sayT:0, blink:0 };
 
@@ -416,7 +433,7 @@ function resize() {
 // ---------- Ton ----------
 // iPad: Web Audio startet nur nach Berührung (resume) und schweigt bei Stummschaltung,
 // außer die Audio-Session steht auf "playback" (Safari 16.4+).
-let ac, noiseBuf, musicOn = true, nextNote = 0, noteIdx = 0;
+let ac, noiseBuf, musicOn = true, nextNote = 0;
 function unlock() {
   try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
   if (!ac) {
@@ -424,7 +441,7 @@ function unlock() {
     noiseBuf = ac.createBuffer(1, ac.sampleRate * 0.5, ac.sampleRate);
     const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   }
-  if (ac.state !== 'running') ac.resume();
+  if (ac.state !== 'running' && !paused) ac.resume();
 }
 for (const ev of ['pointerdown', 'touchend', 'click', 'keydown']) addEventListener(ev, unlock, { capture: true });
 
@@ -460,17 +477,37 @@ const SFX = {
 };
 function sound(k) { if (ac && ac.state === 'running') SFX[k](); }
 
-// Leise Hintergrundmelodie (Pentatonik, 0 = Pause)
-const MELODY = [523, 659, 784, 659, 587, 523, 440, 0, 392, 440, 523, 587, 659, 587, 523, 0,
-                659, 784, 880, 784, 659, 587, 523, 0, 440, 523, 587, 523, 440, 392, 523, 0];
+// Hintergrundmusik: jedes Lied wird neu erfunden (Tonart, Tempo, Klang, Melodie),
+// Form A A' B A auf der Pentatonik – klingt immer freundlich, wiederholt sich nie gleich.
+const PENTA = [0, 2, 4, 7, 9], rnd = n => Math.floor(Math.random() * n);
+const deg2f = (root, d) => root * Math.pow(2, (Math.floor(d / 5) * 12 + PENTA[((d % 5) + 5) % 5]) / 12);
+let song = null;
+function phrase(start) {
+  let d = start; const out = [];
+  for (let i = 0; i < 8; i++) {
+    d = Math.max(0, Math.min(9, d + [-2, -1, -1, 0, 1, 1, 2][rnd(7)]));
+    out.push(i % 4 === 3 && Math.random() < 0.4 ? null : d);
+  }
+  out[7] = Math.random() < 0.5 ? 5 : 0;          // Phrase endet auf dem Grundton
+  return out;
+}
+function newSong() {
+  const A = phrase(5), B = phrase(7), A2 = A.slice(0, 6).concat(phrase(4).slice(6));
+  song = {
+    root: [262, 294, 330, 349, 392][rnd(5)], beat: 0.24 + Math.random() * 0.12,
+    wave: ['sine', 'triangle'][rnd(2)], bass: [[0, 0, 3, 4], [0, 3, 0, 4], [0, 2, 3, 4], [0, 4, 2, 3]][rnd(4)],
+    notes: [...A, ...A2, ...B, ...A, null, null, null, null], i: 0,
+  };
+}
 function music() {
   if (!ac || !musicOn || ac.state !== 'running') return;
   if (nextNote < ac.currentTime) nextNote = ac.currentTime + 0.05;
   while (nextNote < ac.currentTime + 0.25) {
-    const i = noteIdx++ % MELODY.length, f = MELODY[i], at = nextNote - ac.currentTime;
-    if (f) tone(f, .3, { type: 'sine', vol: .035, at });
-    if (i % 4 === 0) tone([131, 175, 196, 131][(i >> 3) % 4], .5, { type: 'sine', vol: .04, at });
-    nextNote += 0.3;
+    if (!song || song.i >= song.notes.length) newSong();
+    const i = song.i++, d = song.notes[i], at = nextNote - ac.currentTime;
+    if (d !== null) tone(deg2f(song.root, d), song.beat * 1.1, { type: song.wave, vol: .035, at });
+    if (i % 4 === 0 && i < 32) tone(deg2f(song.root / 2, song.bass[(i >> 3) % 4]), song.beat * 2, { type: 'sine', vol: .045, at });
+    nextNote += song.beat;
   }
 }
 
@@ -481,16 +518,30 @@ function say(html) {
 }
 
 // ---------- Eingabe ----------
-const press = (id, fn) => document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); fn(); });
+const press = (id, fn) => document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); if (!paused) fn(); });
 press('left', () => move(-1)); press('right', () => move(1)); press('turn', wantTurn); press('drop', drop);
 document.addEventListener('keydown', e => {
-  const k = { ArrowLeft: () => move(-1), ArrowRight: () => move(1), ArrowUp: wantTurn, ' ': drop, ArrowDown: drop }[e.key];
-  if (k) { e.preventDefault(); k(); }
+  const k = { ArrowLeft: () => move(-1), ArrowRight: () => move(1), ArrowUp: wantTurn, ArrowDown: wantTurn,
+              ' ': drop, p: togglePause, P: togglePause, Escape: togglePause }[e.key];
+  if (!k) return;
+  e.preventDefault(); document.activeElement.blur();   // sonst schiebt ← → den Tempo-Regler
+  if (e.repeat && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;   // Gedrückthalten nur beim Schieben
+  if (!paused || k === togglePause) k();
 });
-for (const b of document.querySelectorAll('.speed')) b.addEventListener('click', () => {
-  document.querySelectorAll('.speed').forEach(x => x.classList.toggle('on', x === b));
-  fallMs = +b.dataset.ms;
-});
+// Tempo-Regler: Stufe 1 = 3 s pro Reihe … Stufe 10 = 0,45 s
+const speedInput = document.getElementById('speed');
+const setSpeed = () => fallMs = Math.round(3000 * Math.pow(0.81, speedInput.value - 1));
+speedInput.addEventListener('input', setSpeed); setSpeed();
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('pause').textContent = paused ? '▶' : '⏸';
+  document.getElementById('pauseBox').classList.toggle('on', paused);
+  if (ac) paused ? ac.suspend() : ac.resume();
+}
+document.getElementById('pause').addEventListener('click', togglePause);
+document.getElementById('pauseBox').addEventListener('click', togglePause);
+document.addEventListener('visibilitychange', () => { if (document.hidden && !paused) togglePause(); });
 document.getElementById('music').addEventListener('click', e => {
   musicOn = !musicOn; e.currentTarget.textContent = musicOn ? '🎵' : '🔇';
 });
@@ -499,7 +550,8 @@ addEventListener('resize', resize);
 resize(); board = emptyBoard(); spawn();
 let last = performance.now();
 (function loop(now) {
-  update(Math.min((now - last) / 1000, 0.1)); last = now;
+  if (!paused) update(Math.min((now - last) / 1000, 0.1));
+  last = now;
   draw(); requestAnimationFrame(loop);
 })(last);
 </script>
