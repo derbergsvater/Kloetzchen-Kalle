@@ -51,6 +51,7 @@
   <span class="progress"><span id="stars">⭐ 0</span><span id="bar"><i></i></span><span id="gift">🎁</span></span>
   <label class="tempo" title="Tempo">🐌<input id="speed" type="range" min="1" max="10" value="2">🐇</label>
   <button id="music" title="Musik an/aus">🎵</button>
+  <button id="help" title="Kalle hilft (Taste H)">🔨</button>
   <button id="chestBtn" title="Schatzkiste">🧰</button>
   <button id="pause" title="Pause (Taste P)">⏸</button>
 </header>
@@ -69,6 +70,7 @@
     <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Stein schieben</td></tr>
     <tr><td><kbd>↑</kbd></td><td>Kalle dreht den Stein (beim Fallen: anhalten)</td></tr>
     <tr><td><kbd>↓</kbd> / <kbd>Leertaste</kbd></td><td>Stein fallen lassen</td></tr>
+    <tr><td><kbd>H</kbd> / 🔨</td><td>Hilfe: Kalle zertrümmert oben Reihen, bis die Hälfte frei ist</td></tr>
     <tr><td><kbd>P</kbd></td><td>Pause</td></tr>
   </table>
 </div></div>
@@ -89,6 +91,7 @@ const SHAPES = [
 ];
 // Kalle-Tempo: Zellen pro Sekunde; Drehung = Schwung holen + Stemmen + Loslassen (Sekunden)
 const WALK = 11, CLIMB = 18, DROP_MS = 35;
+const H_UP = 0.28, H_HIT = 0.12;   // Hammer: ausholen, zuschlagen
 const T_WIND = 0.12, T_PUSH = 0.26, T_REL = 0.12, TURN = T_WIND + T_PUSH + T_REL;
 // Kalles Füße relativ zum Griffpunkt (in Zellen): neben dem Stein → oben drauf
 const OFF0 = [-0.42, 0.55], OFF1 = [-0.4, 0.1];
@@ -132,7 +135,9 @@ function fits(m, px, py) {
   });
 }
 const emptyBoard = () => Array.from({ length: ROWS }, () => Array(COLS).fill(null));
-const busy = () => ['walk', 'down', 'turn', 'up'].includes(man.state);
+const busy = () => ['walk', 'down', 'turn', 'up', 'hwalk', 'hdown', 'hammer'].includes(man.state);
+const ROPE = ['down', 'turn', 'up', 'hdown', 'hammer'];
+const stackTop = () => { const i = board.findIndex(r => r.some(Boolean)); return i < 0 ? ROWS : i; };
 
 function spawn() {
   const i = nextShape;
@@ -246,6 +251,21 @@ function updateMan(dt) {
       }
       break;
     }
+    // Hilfe-Modus: an der Feldmitte abseilen und oberste Reihen zertrümmern, bis die Hälfte frei ist
+    case 'hwalk':
+      if (stepToward(FX + COLS * S / 2, WALK, dt)) { man.ax = man.x; man.state = 'hdown'; sound('zipDown'); }
+      break;
+    case 'hdown':
+      if (moveTo(man.ax, FY + stackTop() * S, CLIMB, dt)) { man.state = 'hammer'; man.t = 0; man.fired = {}; }
+      break;
+    case 'hammer': {
+      man.t += dt;
+      if (man.t >= H_UP + H_HIT && !man.fired.hit) { man.fired.hit = 1; smashRow(stackTop()); }
+      if (man.t >= H_UP + H_HIT + 0.25)
+        if (ROWS - stackTop() > ROWS / 2) man.state = 'hdown';
+        else { man.state = 'up'; sound('zipUp'); talk('Geschafft!', 1); man.cheer = 0.6; }
+      break;
+    }
     case 'up':
       if (moveTo(man.ax, RAIL, CLIMB, dt)) man.state = man.queue > 0 ? 'walk' : 'follow';
       break;
@@ -330,7 +350,7 @@ function confetti(x, y, n) {
 const floatText = (txt, x, y) => parts.push({ txt, x, y, vx: 0, vy: -1.2 * S, r: 0, life: 1.4 });
 function updateDog(dt) {
   if (!on('hund')) return;
-  const onRope = ['down', 'turn', 'up'].includes(man.state);
+  const onRope = ROPE.includes(man.state);
   let tx = man.state === 'home' || man.state === 'gohome' && !piece ? HOME - .85 * S : (onRope ? man.ax : man.x) - man.dir * .8 * S;
   tx = Math.max(S * .4, Math.min(tx, HOME + .5 * S));
   if (!dog.x) dog.x = tx;
@@ -346,6 +366,17 @@ function move(dx) {
   if (man.state === 'turn' && man.ok && !fits(rotate(piece.m), piece.x + dx + man.kick, piece.y)) return;
   piece.x += dx; sound('move');
   if (['down', 'turn', 'up'].includes(man.state)) man.ax += dx * S;   // Seil wandert mit
+}
+function help() {
+  if (busy() || dropping || clearing || wipe || gift) return;
+  if (ROWS - stackTop() <= ROWS / 2) { talk('Noch genug Platz!', 1.2); sound('bonk'); return; }
+  man.state = 'hwalk'; talk('Ich helf dir!', 1.2); sound('juhu');
+}
+function smashRow(y) {
+  board[y].forEach((c, x) => { if (c) for (let i = 0; i < 4; i++) parts.push({ x: FX + (x + .5) * S, y: FY + (y + .5) * S,
+    vx: (Math.random() - .5) * 8 * S, vy: -(Math.random() * 5 + 1) * S, c, r: Math.random() * 6, life: 1 + Math.random() * .5, s: 2.2 }); });
+  board[y] = Array(COLS).fill(null);
+  sound('krach'); talk('Bumm!', .5);
 }
 function drop() {
   if (!piece || busy() || clearing || wipe) return;
@@ -424,7 +455,7 @@ function drawMan() {
             : released && man.ok ? Math.sin((t - T_WIND - T_PUSH) / T_REL * Math.PI) * u * 0.25 : 0;
   const x = man.x, f = man.y - hop;
   // Seil von der Schiene
-  if (['down', 'turn', 'up'].includes(st)) {
+  if (ROPE.includes(st)) {
     ctx.strokeStyle = '#8d6e63'; ctx.lineWidth = u * 0.06; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(man.ax, RAIL - u * 0.05); ctx.lineTo(x, f - u * 0.75); ctx.stroke();
     ctx.fillStyle = '#5d4037'; ctx.beginPath(); ctx.arc(man.ax, RAIL, u * 0.08, 0, 7); ctx.fill();
@@ -435,6 +466,14 @@ function drawMan() {
   if (gripping && piece) {
     const [gx, gy] = gripAt(turnAngle()), dx = gx - x, dy = gy - f, a = -man.lean;
     hands = [dx * Math.cos(a) - dy * Math.sin(a), dx * Math.sin(a) + dy * Math.cos(a)];
+  }
+  // Hammer: Hände kreisen um die Schulter von hinten-oben nach vorn-unten
+  let ham = null;
+  if (st === 'hammer') {
+    // Winkel ab senkrecht oben, positiv = in Blickrichtung
+    const t2 = man.t, a = t2 < H_UP ? lerp(1.6, -0.5, ease(t2 / H_UP)) : t2 < H_UP + H_HIT ? lerp(-0.5, 2.5, (t2 - H_UP) / H_HIT) : 2.5;
+    ham = [(man.dir || 1) * Math.sin(a), -Math.cos(a)];
+    hands = [ham[0] * u * 0.38, -u * 0.72 + ham[1] * u * 0.38];
   }
   const breathe = st === 'home' ? Math.sin(time * 2.5) * u * 0.015 : 0;
   const swing = man.moving ? Math.sin(man.walkT * 14) * 0.6
@@ -467,6 +506,14 @@ function drawMan() {
     ctx.strokeStyle = '#fefae0'; ctx.lineWidth = u * 0.11;
     ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(hx, hy); ctx.stroke();
     ctx.fillStyle = '#f4c095'; ctx.beginPath(); ctx.arc(hx, hy, u * 0.065, 0, 7); ctx.fill();
+  }
+  if (ham) {
+    const [hx0, hy0] = hands, ex = hx0 + ham[0] * u * 0.55, ey = hy0 + ham[1] * u * 0.55;
+    ctx.strokeStyle = '#8d5524'; ctx.lineWidth = u * 0.07;
+    ctx.beginPath(); ctx.moveTo(hx0 - ham[0] * u * 0.05, hy0 - ham[1] * u * 0.05); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.strokeStyle = '#6c757d'; ctx.lineWidth = u * 0.22; ctx.lineCap = 'butt';
+    ctx.beginPath(); ctx.moveTo(ex + ham[1] * u * 0.2, ey - ham[0] * u * 0.2); ctx.lineTo(ex - ham[1] * u * 0.2, ey + ham[0] * u * 0.2); ctx.stroke();
+    ctx.lineCap = 'round';
   }
   // Kopf
   const shake = released && !man.ok ? Math.sin(t * 40) * u * 0.05 : 0;
@@ -619,7 +666,7 @@ function drawParts() {
       ctx.fillStyle = '#ff9f1c'; ctx.fillText(p.txt, p.x, p.y); ctx.textAlign = 'left';
     } else {
       ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.c;
-      ctx.fillRect(-S * .08, -S * .04, S * .16, S * .08); ctx.restore();
+      const k = p.s || 1; ctx.fillRect(-S * .08 * k, -S * .04 * k, S * .16 * k, S * .08 * k); ctx.restore();
     }
   }
   ctx.globalAlpha = 1;
@@ -797,6 +844,8 @@ function hit(t, v, type, freq, d, dest = musicBus) {   // Rauschen gefiltert: Kl
 const SFX = {
   pop:     () => INST.pluck(79, ac.currentTime, .12, sfxBus),
   move:    () => tone(620, .06, { vol: .08 }),
+  krach:   () => { noise(.12, { vol: .4, freq: 900 }); tone(1500, .12, { type: 'sine', vol: .08 }); tone(110, .25, { type: 'sine', vol: .3, to: 45 });
+                   noise(.6, { vol: .25, freq: 2200, at: .05 }); [79, 74, 70, 67].forEach((m, i) => INST.mallet(m, ac.currentTime + .08 + i * .06, .18, sfxBus)); },
   noch:    () => INST.pluck(72 + man.queue * 4, ac.currentTime, .12, sfxBus),   // je Druck einen Ton höher
   step:    () => tone(170 + Math.random() * 50, .05, { type: 'sine', vol: .12 }),
   zipDown: () => tone(1000, .35, { type: 'sine', vol: .07, to: 300 }),
@@ -909,10 +958,10 @@ function say(html) {
 
 // ---------- Eingabe ----------
 const press = (id, fn) => document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); if (!paused) fn(); });
-press('left', () => move(-1)); press('right', () => move(1)); press('turn', wantTurn); press('drop', drop);
+press('left', () => move(-1)); press('right', () => move(1)); press('turn', wantTurn); press('drop', drop); press('help', help);
 document.addEventListener('keydown', e => {
   const k = { ArrowLeft: () => move(-1), ArrowRight: () => move(1), ArrowUp: wantTurn, ArrowDown: drop,
-              ' ': drop, p: togglePause, P: togglePause, Escape: togglePause }[e.key];
+              ' ': drop, h: help, H: help, p: togglePause, P: togglePause, Escape: togglePause }[e.key];
   if (!k) return;
   e.preventDefault(); document.activeElement.blur();   // sonst schiebt ← → den Tempo-Regler
   if (e.repeat && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;   // Gedrückthalten nur beim Schieben
