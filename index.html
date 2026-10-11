@@ -119,6 +119,8 @@ const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let S, FX, FY, RAIL, HOME;          // Zellgröße, Feld-Ursprung, Schiene (Fußhöhe), Kalles Platz
 let board, piece, nextShape = Math.floor(Math.random() * SHAPES.length), acc = 0, dropping = false, clearing = null, wipe = null, time = 0;
 let gift = null, giftQueue = [], parts = [];
+let hint = null, idleT = 0, turns = 0;   // Kalles Tipp: Zielplatz, Zeit ohne Eingabe, Drehungen je Stein
+const HINT_IDLE = 6, HINT_TURNS = 4;     // Tipp nach 6 s Zögern oder ab dem 4. Drehen
 const dog = { x: 0, dir: -1, moving: false };
 let fallMs = 2400, paused = false;
 const man = { x:0, y:0, ax:0, dir:-1, state:'home', t:0, queue:0, ok:false, kick:0, cheer:0,
@@ -151,9 +153,10 @@ function spawn() {
 }
 
 function lock() {
+  if (hint && hint.x === piece.x && hint.y === piece.y && JSON.stringify(hint.m) === JSON.stringify(piece.m)) { talk('Super!', 1); man.cheer = 0.5; }
   for (const [x, y] of cells(piece.m)) if (piece.y + y >= 0)
     board[piece.y + y][piece.x + x] = piece.rainbow ? `hsl(${((piece.x + x) * 45 + (piece.y + y) * 70) % 360} 80% 65%)` : piece.c;
-  piece = null; dropping = false; man.queue = 0;
+  piece = null; dropping = false; man.queue = 0; hint = null; idleT = 0; turns = 0;
   if (man.state === 'follow') man.state = 'gohome';
   sound('land');
   const full = board.map((r, y) => r.every(Boolean) ? y : -1).filter(y => y >= 0);
@@ -186,6 +189,7 @@ function wantTurn() {
   // beim Fallenlassen: ↑ bremst nur (kein Drehen), angefangene Strecke bleibt erhalten
   if (dropping) { acc = acc / DROP_MS * fallMs; dropping = false; sound('move'); return; }
   man.queue = Math.min(man.queue + 1, 3);
+  idleT = 0; if (++turns >= HINT_TURNS && !hint) giveHint();
   man.bump = 0.25; sound('noch');
   if (!busy()) man.state = 'walk';
 }
@@ -307,6 +311,7 @@ function update(dt) {
       if (giftQueue.length) startGift(); else spawn();
     }
   } else if (piece && !busy()) {
+    if (!dropping && !hint && (idleT += dt) > HINT_IDLE) giveHint();
     acc += dt * 1000;
     const step = dropping ? DROP_MS : fallMs;
     if (acc >= step) {
@@ -364,8 +369,55 @@ function move(dx) {
   if (!fits(piece.m, piece.x + dx, piece.y)) return;
   // während Kalle dreht: die gedrehte Form muss am neuen Platz auch passen
   if (man.state === 'turn' && man.ok && !fits(rotate(piece.m), piece.x + dx + man.kick, piece.y)) return;
-  piece.x += dx; sound('move');
+  piece.x += dx; sound('move'); idleT = 0;
   if (['down', 'turn', 'up'].includes(man.state)) man.ax += dx * S;   // Seil wandert mit
+}
+// Tipp: alle Drehungen × Spalten durchprobieren, Landeplatz bewerten (volle Reihen gut; Höhe, Löcher, Zacken schlecht)
+function bestSpot() {
+  let best = null, m = piece.m;
+  for (let rot = 0; rot < 4; rot++, m = rotate(m)) {
+    for (let x = -3; x < COLS; x++) {
+      if (!fits(m, x, piece.y)) continue;
+      let y = piece.y; while (fits(m, x, y + 1)) y++;
+      const b = board.map(row => row.slice());
+      if (cells(m).some(([cx, cy]) => y + cy < 0)) continue;
+      for (const [cx, cy] of cells(m)) b[y + cy][x + cx] = 1;
+      const full = b.filter(row => row.every(Boolean)).length;
+      const rest = b.filter(row => !row.every(Boolean));
+      let height = 0, holes = 0, bump = 0, prev = null;
+      for (let cx = 0; cx < COLS; cx++) {
+        const top = rest.findIndex(row => row[cx]), h = top < 0 ? 0 : rest.length - top;
+        if (top >= 0) for (let cy = top; cy < rest.length; cy++) if (!rest[cy][cx]) holes++;
+        height += h; if (prev !== null) bump += Math.abs(h - prev); prev = h;
+      }
+      const score = 0.76 * full - 0.51 * height - 0.36 * holes - 0.18 * bump - rot * 0.01;
+      if (!best || score > best.score) best = { m, x, y, rot, score };
+    }
+  }
+  return best;
+}
+function giveHint() {
+  if (!piece) return;
+  hint = bestSpot();
+  if (!hint) return;
+  const n = (hint.rot - man.queue + 4) % 4;   // Drehungen, die Kalle schon vorgemerkt hat, abziehen
+  talk(`${n ? `Dreh ${n}× – ` : ''}da passt er gut!`, 2.5); sound('tipp');
+}
+function drawHint() {
+  if (!hint || !piece) return;
+  const pulse = 0.5 + 0.5 * Math.sin(time * 5), cs = cells(hint.m);
+  ctx.setLineDash([S * .12, S * .08]); ctx.lineWidth = S * .07; ctx.strokeStyle = `rgba(255,159,28,${0.6 + 0.4 * pulse})`;
+  for (const [x, y] of cs) {
+    cell(FX + (hint.x + x) * S, FY + (hint.y + y) * S, piece.c, 0.25 + 0.2 * pulse);
+    ctx.beginPath(); ctx.roundRect(FX + (hint.x + x) * S + S * .1, FY + (hint.y + y) * S + S * .1, S * .8, S * .8, S * .18); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // hüpfender Pfeil über dem Zielplatz
+  const ax = FX + (hint.x + cs.reduce((a, c) => a + c[0], 0) / cs.length + .5) * S;
+  const ay = FY + (hint.y + Math.min(...cs.map(c => c[1]))) * S - S * (.35 + .25 * Math.abs(Math.sin(time * 4)));
+  ctx.fillStyle = '#ff9f1c'; ctx.strokeStyle = '#fff'; ctx.lineWidth = S * .05;
+  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax - S * .3, ay - S * .35); ctx.lineTo(ax - S * .12, ay - S * .35); ctx.lineTo(ax - S * .12, ay - S * .7);
+  ctx.lineTo(ax + S * .12, ay - S * .7); ctx.lineTo(ax + S * .12, ay - S * .35); ctx.lineTo(ax + S * .3, ay - S * .35); ctx.closePath(); ctx.fill(); ctx.stroke();
 }
 function help() {
   if (busy() || dropping || clearing || wipe || gift) return;
@@ -375,7 +427,7 @@ function help() {
 function smashRow(y) {
   board[y].forEach((c, x) => { if (c) for (let i = 0; i < 4; i++) parts.push({ x: FX + (x + .5) * S, y: FY + (y + .5) * S,
     vx: (Math.random() - .5) * 8 * S, vy: -(Math.random() * 5 + 1) * S, c, r: Math.random() * 6, life: 1 + Math.random() * .5, s: 2.2 }); });
-  board[y] = Array(COLS).fill(null);
+  board[y] = Array(COLS).fill(null); hint = null;
   sound('krach'); talk('Bumm!', .5);
 }
 function drop() {
@@ -693,6 +745,7 @@ function draw() {
     cell(FX + x * S, FY + y * S + sink, flash ? '#ffffff' : c, wipe ? Math.max(0, 1 - wipe.t) : 1);
   }
   drawNext();
+  drawHint();
   if (piece) drawPiece();
   if (gift) drawGift();
   drawDog();
@@ -854,6 +907,7 @@ const SFX = {
   ruck:    () => { tone(330, .14, { type: 'square', vol: .06, to: 250 }); tone(90, .55, { type: 'sawtooth', vol: .07, to: 160, at: .05 }); noise(.5, { vol: .08, freq: 600, at: .05 }); },
   strain:  () => tone(200, .45, { type: 'sawtooth', vol: .06, to: 160 }),
   pling:   () => INST.bell(84, ac.currentTime, .22, sfxBus),
+  tipp:    () => [76, 81].forEach((m, i) => INST.bell(m, ac.currentTime + i * .15, .2, sfxBus)),
   bonk:    () => tone(160, .25, { type: 'square', vol: .1, to: 80 }),
   whoosh:  () => noise(.3, { vol: .2, freq: 2500 }),
   land:    () => { noise(.18, { vol: .5, freq: 350 }); tone(120, .18, { type: 'sine', vol: .25, to: 55 }); },
